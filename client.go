@@ -1,0 +1,167 @@
+package lierc
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"time"
+)
+
+var Multi = make(chan *IRCClientMultiMessage)
+var Events = make(chan *IRCClientMessage)
+
+type IRCClient struct {
+	conn       *IRCConn
+	Config     *IRCConfig
+	Channels   map[string]*IRCChannel
+	Nick       string
+	nickbuff   map[string][]string
+	registered bool
+	incoming   chan *IRCMessage
+	connect    chan bool
+	quit       chan bool
+	retries    int
+	Id         string
+	timer      *time.Timer
+}
+
+type IRCClientMultiMessage struct {
+	Id       string
+	Message  *IRCMessage
+	Channels []string
+}
+
+type IRCClientMessage struct {
+	Id      string
+	Message *IRCMessage
+}
+
+func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
+	connect := make(chan bool)
+	incoming := make(chan *IRCMessage)
+
+	client := &IRCClient{
+		conn:       NewIRCConn(incoming, connect, Id),
+		Config:     config,
+		registered: false,
+		Channels:   make(map[string]*IRCChannel),
+		nickbuff:   make(map[string][]string),
+		connect:    connect,
+		incoming:   incoming,
+		Nick:       config.Nick,
+		quit:       make(chan bool),
+		Id:         Id,
+	}
+
+	go client.Event()
+	go client.conn.Connect(config.Server(), config.Ssl)
+
+	return client
+}
+
+func (client *IRCClient) Destroy() {
+	client.quit <- true
+}
+
+func (client *IRCClient) Send(line string) {
+	log.Printf("%s ---> %s", client.Id, line)
+	client.conn.outgoing <- line
+}
+
+func (client *IRCClient) Event() {
+	for {
+		select {
+		case message := <-client.incoming:
+			log.Printf("%s <--- %s", client.Id, message.Raw)
+			if client.Message(message) {
+				clientmsg := &IRCClientMessage{
+					Id:      client.Id,
+					Message: message,
+				}
+				Events <- clientmsg
+			}
+		case connected := <-client.connect:
+			if connected {
+				client.Register()
+			} else {
+				client.Reconnect()
+			}
+		case <-client.quit:
+			if client.timer != nil {
+				client.timer.Stop()
+			}
+			client.Send("QUIT bye")
+			client.conn.quit <- true
+			return
+		}
+	}
+}
+
+func (client *IRCClient) Reconnect() {
+	client.registered = false
+	client.retries = client.retries + 1
+	delay := 15 * client.retries
+	if delay > 300 {
+		delay = 300
+	}
+	seconds := time.Duration(delay) * time.Second
+	log.Printf("%s Reconnecting in %s", client.Id, seconds)
+	client.timer = time.AfterFunc(seconds, func() {
+		config := client.Config
+		client.conn = NewIRCConn(client.incoming, client.connect, client.Id)
+		client.conn.Connect(config.Server(), config.Ssl)
+	})
+}
+
+func (client *IRCClient) Message(message *IRCMessage) bool {
+	if handler, ok := handlers[message.Command]; ok {
+		handler(client, message)
+	}
+
+	return true
+}
+
+func (client *IRCClient) NickCollision(message *IRCMessage) {
+	if !client.registered {
+		client.Nick = client.Nick + "_"
+		client.Send(fmt.Sprintf("NICK %s", client.Nick))
+	}
+}
+
+func (client *IRCClient) Join() {
+	for _, channel := range client.Config.Channels {
+		if channel != "" {
+			client.Send(fmt.Sprintf("JOIN %s", channel))
+		}
+	}
+}
+
+func (client *IRCClient) Welcome() {
+	if !client.registered {
+		client.retries = 0
+		client.registered = true
+		client.Join()
+	}
+}
+
+func (client *IRCClient) Register() {
+	if client.Config.Pass != "" {
+		client.Send(fmt.Sprintf("PASS %s", client.Config.Pass))
+	}
+
+	user := client.Config.User
+	if user == "" {
+		user = client.Config.Nick
+	}
+
+	hostname, _ := os.Hostname()
+	client.Send(fmt.Sprintf(
+		"USER %s %s %s %s",
+		user,
+		hostname,
+		client.Config.Host,
+		user,
+	))
+
+	client.Send(fmt.Sprintf("NICK %s", client.Config.Nick))
+}

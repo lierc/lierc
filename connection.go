@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"log"
 	"net"
+	"os"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ type IRCConn struct {
 	tls      *tls.Conn
 	id       string
 	closing  bool
+	debug    bool
 }
 
 func NewIRCConn(incoming chan *IRCMessage, connect chan bool, Id string) *IRCConn {
@@ -27,13 +29,16 @@ func NewIRCConn(incoming chan *IRCMessage, connect chan bool, Id string) *IRCCon
 		quit:     make(chan bool),
 		connect:  connect,
 		id:       Id,
+		debug:    os.Getenv("LIERC_DEBUG") != "",
 	}
 
 	return irc
 }
 
 func (conn *IRCConn) Connect(server string, ssl bool) error {
-	log.Printf("%s Connecting to %s", conn.id, server)
+	if conn.debug {
+		log.Printf("%s Connecting to %s", conn.id, server)
+	}
 
 	conf := &tls.Config{
 		InsecureSkipVerify: true,
@@ -43,7 +48,9 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 		c, err := tls.Dial("tcp", server, conf)
 
 		if err != nil {
-			log.Printf("%s connection failed: %v", conn.id, err)
+			if conn.debug {
+				log.Printf("%s connection failed: %v", conn.id, err)
+			}
 			conn.connect <- false
 			return err
 		}
@@ -58,7 +65,9 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 		c, err := net.Dial("tcp", server)
 
 		if err != nil {
-			log.Printf("%s connection failed: %v", conn.id, err)
+			if conn.debug {
+				log.Printf("%s connection failed: %v", conn.id, err)
+			}
 			conn.connect <- false
 			return err
 		}
@@ -71,7 +80,9 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 
 	}
 
-	log.Printf("%s Connected to %s", conn.id, server)
+	if conn.debug {
+		log.Printf("%s Connected to %s", conn.id, server)
+	}
 
 	conn.connect <- true
 
@@ -88,7 +99,9 @@ func (conn *IRCConn) Send() {
 			_, err := conn.rw.WriteString(line + "\r\n")
 
 			if err != nil {
-				log.Printf("%s Error writing %v", conn.id, err)
+				if conn.debug {
+					log.Printf("%s Error writing %v", conn.id, err)
+				}
 				if !conn.closing {
 					conn.Close()
 					conn.connect <- false
@@ -121,7 +134,9 @@ func (conn *IRCConn) Recv() {
 		line, err := conn.rw.ReadString('\n')
 
 		if err != nil {
-			log.Printf("%s Error reading %v", conn.id, err)
+			if conn.debug {
+				log.Printf("%s Error reading %v", conn.id, err)
+			}
 			if !conn.closing {
 				conn.Close()
 				conn.connect <- false

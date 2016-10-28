@@ -2,6 +2,7 @@ package lierc
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -137,6 +138,13 @@ func init() {
 
 	handlers["PING"] = func(client *IRCClient, message *IRCMessage) {
 		client.Send(fmt.Sprintf("PONG %s", message.Params[0]))
+	}
+
+	handlers["PRIVMSG"] = func(client *IRCClient, message *IRCMessage) {
+		text := message.Params[1]
+		if len(text) >= 7 && text[0:7] == "\x01VERSION" {
+			log.Printf("%v", message)
+		}
 	}
 
 	handlers["NICK"] = func(client *IRCClient, message *IRCMessage) {

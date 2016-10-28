@@ -9,6 +9,7 @@ import (
 
 var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
+var Connects = make(chan *IRCConnectMessage)
 
 type IRCClient struct {
 	conn       *IRCConn
@@ -16,13 +17,19 @@ type IRCClient struct {
 	Channels   map[string]*IRCChannel
 	Nick       string
 	nickbuff   map[string][]string
-	registered bool
+	Registered bool
 	incoming   chan *IRCMessage
 	connect    chan bool
 	quit       chan bool
 	retries    int
+	debug      bool
 	Id         string
 	timer      *time.Timer
+}
+
+type IRCConnectMessage struct {
+	Id        string
+	Connected bool
 }
 
 type IRCClientMultiMessage struct {
@@ -43,11 +50,12 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 	client := &IRCClient{
 		conn:       NewIRCConn(incoming, connect, Id),
 		Config:     config,
-		registered: false,
+		Registered: false,
 		Channels:   make(map[string]*IRCChannel),
 		nickbuff:   make(map[string][]string),
 		connect:    connect,
 		incoming:   incoming,
+		debug:      os.Getenv("LIERC_DEBUG") != "",
 		Nick:       config.Nick,
 		quit:       make(chan bool),
 		Id:         Id,
@@ -64,7 +72,9 @@ func (client *IRCClient) Destroy() {
 }
 
 func (client *IRCClient) Send(line string) {
-	log.Printf("%s ---> %s", client.Id, line)
+	if client.debug {
+		log.Printf("%s ---> %s", client.Id, line)
+	}
 	client.conn.outgoing <- line
 }
 
@@ -72,7 +82,9 @@ func (client *IRCClient) Event() {
 	for {
 		select {
 		case message := <-client.incoming:
-			log.Printf("%s <--- %s", client.Id, message.Raw)
+			if client.debug {
+				log.Printf("%s <--- %s", client.Id, message.Raw)
+			}
 			if client.Message(message) {
 				clientmsg := &IRCClientMessage{
 					Id:      client.Id,
@@ -81,6 +93,10 @@ func (client *IRCClient) Event() {
 				Events <- clientmsg
 			}
 		case connected := <-client.connect:
+			Connects <- &IRCConnectMessage{
+				Id:        client.Id,
+				Connected: connected,
+			}
 			if connected {
 				client.Register()
 			} else {
@@ -90,22 +106,30 @@ func (client *IRCClient) Event() {
 			if client.timer != nil {
 				client.timer.Stop()
 			}
+
 			client.Send("QUIT bye")
 			client.conn.quit <- true
+
+			Connects <- &IRCConnectMessage{
+				Id:        client.Id,
+				Connected: false,
+			}
 			return
 		}
 	}
 }
 
 func (client *IRCClient) Reconnect() {
-	client.registered = false
+	client.Registered = false
 	client.retries = client.retries + 1
 	delay := 15 * client.retries
 	if delay > 300 {
 		delay = 300
 	}
 	seconds := time.Duration(delay) * time.Second
-	log.Printf("%s Reconnecting in %s", client.Id, seconds)
+	if client.debug {
+		log.Printf("%s Reconnecting in %s", client.Id, seconds)
+	}
 	client.timer = time.AfterFunc(seconds, func() {
 		config := client.Config
 		client.conn = NewIRCConn(client.incoming, client.connect, client.Id)
@@ -122,7 +146,7 @@ func (client *IRCClient) Message(message *IRCMessage) bool {
 }
 
 func (client *IRCClient) NickCollision(message *IRCMessage) {
-	if !client.registered {
+	if !client.Registered {
 		client.Nick = client.Nick + "_"
 		client.Send(fmt.Sprintf("NICK %s", client.Nick))
 	}
@@ -137,9 +161,9 @@ func (client *IRCClient) Join() {
 }
 
 func (client *IRCClient) Welcome() {
-	if !client.registered {
+	if !client.Registered {
 		client.retries = 0
-		client.registered = true
+		client.Registered = true
 		client.Join()
 	}
 }

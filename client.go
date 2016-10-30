@@ -76,9 +76,8 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 
 func (client *IRCClient) Destroy() {
 	client.mu.Lock()
-	defer client.mu.Unlock()
-
 	client.quitting = true
+	client.mu.Unlock()
 
 	if client.timer != nil {
 		client.timer.Stop()
@@ -95,7 +94,9 @@ func (client *IRCClient) Send(line string) {
 	if client.debug {
 		log.Printf("%s ---> %s", client.Id, line)
 	}
-	client.conn.outgoing <- line
+	if client.ConnectMessage.Connected {
+		client.conn.outgoing <- line
+	}
 }
 
 func (client *IRCClient) Event() {

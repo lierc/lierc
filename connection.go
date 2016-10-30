@@ -14,7 +14,7 @@ type IRCConn struct {
 	outgoing chan string
 	connect  chan *IRCConnectMessage
 	quit     chan bool
-	rw       *bufio.ReadWriter
+	reader   *bufio.Reader
 	conn     net.Conn
 	id       string
 	debug    bool
@@ -75,9 +75,8 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 		conn.conn = c
 	}
 
-	conn.rw = bufio.NewReadWriter(
+	conn.reader = bufio.NewReader(
 		bufio.NewReader(conn.conn),
-		bufio.NewWriter(conn.conn),
 	)
 
 	if conn.debug {
@@ -98,7 +97,7 @@ func (conn *IRCConn) Send() {
 	for {
 		select {
 		case line := <-conn.outgoing:
-			_, err := conn.rw.WriteString(line + "\r\n")
+			_, err := conn.conn.Write([]byte(line + "\r\n"))
 
 			if err != nil {
 				if conn.debug {
@@ -111,8 +110,6 @@ func (conn *IRCConn) Send() {
 				}
 				return
 			}
-
-			conn.rw.Flush()
 
 		case <-conn.quit:
 			conn.Close()
@@ -129,7 +126,7 @@ func (conn *IRCConn) Close() {
 
 func (conn *IRCConn) Recv() {
 	for {
-		line, err := conn.rw.ReadString('\n')
+		line, err := conn.reader.ReadString('\n')
 
 		if err != nil {
 			if conn.debug {

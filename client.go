@@ -13,26 +13,28 @@ var Events = make(chan *IRCClientMessage)
 var Connects = make(chan *IRCConnectMessage)
 
 type IRCClient struct {
-	conn       *IRCConn
-	Config     *IRCConfig
-	Channels   map[string]*IRCChannel
-	Nick       string
-	nickbuff   map[string][]string
-	Registered bool
-	incoming   chan *IRCMessage
-	connect    chan bool
-	quit       chan bool
-	quitting   bool
-	retries    int
-	debug      bool
-	Id         string
-	timer      *time.Timer
-	mu         *sync.Mutex
+	conn           *IRCConn
+	Config         *IRCConfig
+	Channels       map[string]*IRCChannel
+	Nick           string
+	nickbuff       map[string][]string
+	Registered     bool
+	ConnectMessage *IRCConnectMessage
+	incoming       chan *IRCMessage
+	connect        chan *IRCConnectMessage
+	quit           chan bool
+	quitting       bool
+	retries        int
+	debug          bool
+	Id             string
+	timer          *time.Timer
+	mu             *sync.Mutex
 }
 
 type IRCConnectMessage struct {
 	Id        string
 	Connected bool
+	Message   string
 }
 
 type IRCClientMultiMessage struct {
@@ -47,7 +49,7 @@ type IRCClientMessage struct {
 }
 
 func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
-	connect := make(chan bool)
+	connect := make(chan *IRCConnectMessage)
 	incoming := make(chan *IRCMessage)
 
 	client := &IRCClient{
@@ -110,12 +112,15 @@ func (client *IRCClient) Event() {
 				}
 				Events <- clientmsg
 			}
-		case connected := <-client.connect:
-			Connects <- &IRCConnectMessage{
-				Id:        client.Id,
-				Connected: connected,
-			}
-			if connected {
+		case connect := <-client.connect:
+			connect.Id = client.Id
+
+			client.mu.Lock()
+			client.ConnectMessage = connect
+			client.mu.Unlock()
+
+			Connects <- connect
+			if connect.Connected {
 				client.Register()
 			} else if client.quitting {
 				client.conn.quit <- true

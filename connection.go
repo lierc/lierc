@@ -12,7 +12,7 @@ import (
 type IRCConn struct {
 	incoming chan *IRCMessage
 	outgoing chan string
-	connect  chan bool
+	connect  chan *IRCConnectMessage
 	quit     chan bool
 	rw       *bufio.ReadWriter
 	conn     net.Conn
@@ -20,7 +20,7 @@ type IRCConn struct {
 	debug    bool
 }
 
-func NewIRCConn(incoming chan *IRCMessage, connect chan bool, Id string) *IRCConn {
+func NewIRCConn(incoming chan *IRCMessage, connect chan *IRCConnectMessage, Id string) *IRCConn {
 	irc := &IRCConn{
 		incoming: incoming,
 		outgoing: make(chan string),
@@ -49,7 +49,10 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 			if conn.debug {
 				log.Printf("%s connection failed: %v", conn.id, err)
 			}
-			conn.connect <- false
+			conn.connect <- &IRCConnectMessage{
+				Connected: false,
+				Message:   err.Error(),
+			}
 			return err
 		}
 
@@ -62,7 +65,10 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 			if conn.debug {
 				log.Printf("%s connection failed: %v", conn.id, err)
 			}
-			conn.connect <- false
+			conn.connect <- &IRCConnectMessage{
+				Connected: false,
+				Message:   err.Error(),
+			}
 			return err
 		}
 
@@ -78,7 +84,9 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 		log.Printf("%s Connected to %s", conn.id, server)
 	}
 
-	conn.connect <- true
+	conn.connect <- &IRCConnectMessage{
+		Connected: true,
+	}
 
 	go conn.Send()
 	go conn.Recv()
@@ -97,7 +105,10 @@ func (conn *IRCConn) Send() {
 					log.Printf("%s Error writing %v", conn.id, err)
 				}
 				conn.Close()
-				conn.connect <- false
+				conn.connect <- &IRCConnectMessage{
+					Connected: false,
+					Message:   err.Error(),
+				}
 				return
 			}
 
@@ -125,7 +136,10 @@ func (conn *IRCConn) Recv() {
 				log.Printf("%s Error reading %v", conn.id, err)
 			}
 			conn.Close()
-			conn.connect <- false
+			conn.connect <- &IRCConnectMessage{
+				Connected: false,
+				Message:   err.Error(),
+			}
 			return
 		}
 

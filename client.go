@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -21,10 +22,12 @@ type IRCClient struct {
 	incoming   chan *IRCMessage
 	connect    chan bool
 	quit       chan bool
+	quitting   bool
 	retries    int
 	debug      bool
 	Id         string
 	timer      *time.Timer
+	mu         *sync.Mutex
 }
 
 type IRCConnectMessage struct {
@@ -58,7 +61,9 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		debug:      os.Getenv("LIERC_DEBUG") != "",
 		Nick:       config.Nick,
 		quit:       make(chan bool),
+		quitting:   false,
 		Id:         Id,
+		mu:         &sync.Mutex{},
 	}
 
 	go client.Event()
@@ -68,7 +73,20 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 }
 
 func (client *IRCClient) Destroy() {
-	client.quit <- true
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	client.quitting = true
+
+	if client.timer != nil {
+		client.timer.Stop()
+	}
+
+	client.Send("QUIT bye")
+
+	time.AfterFunc(2*time.Second, func() {
+		client.quit <- true
+	})
 }
 
 func (client *IRCClient) Send(line string) {
@@ -99,27 +117,23 @@ func (client *IRCClient) Event() {
 			}
 			if connected {
 				client.Register()
+			} else if client.quitting {
+				client.conn.quit <- true
+				return
 			} else {
 				client.Reconnect()
 			}
 		case <-client.quit:
-			if client.timer != nil {
-				client.timer.Stop()
-			}
-
-			client.Send("QUIT bye")
 			client.conn.quit <- true
-
-			Connects <- &IRCConnectMessage{
-				Id:        client.Id,
-				Connected: false,
-			}
 			return
 		}
 	}
 }
 
 func (client *IRCClient) Reconnect() {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
 	client.Registered = false
 	client.retries = client.retries + 1
 	delay := 15 * client.retries
@@ -138,6 +152,9 @@ func (client *IRCClient) Reconnect() {
 }
 
 func (client *IRCClient) Message(message *IRCMessage) bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
 	if handler, ok := handlers[message.Command]; ok {
 		handler(client, message)
 	}

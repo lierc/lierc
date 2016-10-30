@@ -16,9 +16,7 @@ type IRCConn struct {
 	quit     chan bool
 	rw       *bufio.ReadWriter
 	conn     net.Conn
-	tls      *tls.Conn
 	id       string
-	closing  bool
 	debug    bool
 }
 
@@ -40,11 +38,11 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 		log.Printf("%s Connecting to %s", conn.id, server)
 	}
 
-	conf := &tls.Config{
-		InsecureSkipVerify: true,
-	}
-
 	if ssl {
+		conf := &tls.Config{
+			InsecureSkipVerify: true,
+		}
+
 		c, err := tls.Dial("tcp", server, conf)
 
 		if err != nil {
@@ -55,11 +53,7 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 			return err
 		}
 
-		conn.tls = c
-		conn.rw = bufio.NewReadWriter(
-			bufio.NewReader(conn.tls),
-			bufio.NewWriter(conn.tls),
-		)
+		conn.conn = c
 
 	} else {
 		c, err := net.Dial("tcp", server)
@@ -73,12 +67,12 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 		}
 
 		conn.conn = c
-		conn.rw = bufio.NewReadWriter(
-			bufio.NewReader(conn.conn),
-			bufio.NewWriter(conn.conn),
-		)
-
 	}
+
+	conn.rw = bufio.NewReadWriter(
+		bufio.NewReader(conn.conn),
+		bufio.NewWriter(conn.conn),
+	)
 
 	if conn.debug {
 		log.Printf("%s Connected to %s", conn.id, server)
@@ -102,10 +96,8 @@ func (conn *IRCConn) Send() {
 				if conn.debug {
 					log.Printf("%s Error writing %v", conn.id, err)
 				}
-				if !conn.closing {
-					conn.Close()
-					conn.connect <- false
-				}
+				conn.Close()
+				conn.connect <- false
 				return
 			}
 
@@ -119,11 +111,6 @@ func (conn *IRCConn) Send() {
 }
 
 func (conn *IRCConn) Close() {
-	conn.closing = true
-
-	if conn.tls != nil {
-		conn.tls.Close()
-	}
 	if conn.conn != nil {
 		conn.conn.Close()
 	}
@@ -137,10 +124,8 @@ func (conn *IRCConn) Recv() {
 			if conn.debug {
 				log.Printf("%s Error reading %v", conn.id, err)
 			}
-			if !conn.closing {
-				conn.Close()
-				conn.connect <- false
-			}
+			conn.Close()
+			conn.connect <- false
 			return
 		}
 

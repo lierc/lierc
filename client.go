@@ -20,6 +20,7 @@ type IRCClient struct {
 	nickbuff       map[string][]string
 	Registered     bool
 	ConnectMessage *IRCConnectMessage
+	Isupport       []string
 	incoming       chan *IRCMessage
 	connect        chan *IRCConnectMessage
 	quit           chan bool

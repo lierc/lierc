@@ -16,6 +16,12 @@ func init() {
 		client.Welcome()
 	}
 
+	handlers["005"] = func(client *IRCClient, message *IRCMessage) {
+		for i := 1; i < len(message.Params)-1; i++ {
+			client.Isupport = append(client.Isupport, message.Params[i])
+		}
+	}
+
 	handlers["376"] = func(client *IRCClient, message *IRCMessage) {
 		client.Welcome()
 	}

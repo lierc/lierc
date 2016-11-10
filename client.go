@@ -57,6 +57,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		conn:       NewIRCConn(incoming, connect, Id),
 		Config:     config,
 		Registered: false,
+		Isupport:   make([]string, 0),
 		Channels:   make(map[string]*IRCChannel),
 		nickbuff:   make(map[string][]string),
 		connect:    connect,
@@ -142,6 +143,7 @@ func (client *IRCClient) Reconnect() {
 	defer client.mu.Unlock()
 
 	client.Registered = false
+	client.Isupport = make([]string, 0)
 	client.retries = client.retries + 1
 	delay := 15 * client.retries
 	if delay > 300 {

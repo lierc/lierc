@@ -81,22 +81,16 @@ func init() {
 
 			for _, mode := range modes {
 				switch mode {
-				case 111: //o op
+				case 104: // h halfop
+					channel.SetNickMode(action, mode, message.Params[2])
+				case 111: // o op
 					channel.SetNickMode(action, mode, message.Params[2])
 				case 118: // v voice
 					channel.SetNickMode(action, mode, message.Params[2])
-				case 112: // p private
-					channel.SetMode(action, mode)
-				case 115: // s secert
-					channel.SetMode(action, mode)
-				case 105: // i invite
-					channel.SetMode(action, mode)
-				case 116: // t topic
-					channel.SetMode(action, mode)
-				case 110: // n no messages?
-					channel.SetMode(action, mode)
-				case 109: // m moderated
-					channel.SetMode(action, mode)
+				default:
+					if len(message.Params) == 2 {
+						channel.SetMode(action, mode)
+					}
 				}
 			}
 		}
@@ -111,6 +105,7 @@ func init() {
 				Name:  name,
 				Nicks: make(map[string]string),
 			}
+			client.Send(fmt.Sprintf("MODE %s", name))
 		}
 		if channel, ok := client.Channels[name]; ok {
 			channel.Nicks[nick] = ""
@@ -169,6 +164,12 @@ func init() {
 		topic := message.Params[2]
 		if channel, ok := client.Channels[name]; ok {
 			channel.Topic.Topic = topic
+		}
+	}
+
+	handlers["324"] = func(client *IRCClient, message *IRCMessage) {
+		if channel, ok := client.Channels[message.Params[1]]; ok {
+			channel.Mode = string(message.Params[1][1:])
 		}
 	}
 

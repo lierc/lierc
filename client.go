@@ -141,7 +141,11 @@ func (client *IRCClient) Event() {
 }
 
 func (client *IRCClient) PortMap() (error, string, string) {
-	if client.ConnectMessage.Connected {
+	if client.ConnectMessage == nil {
+		return errors.New("not connected"), "", ""
+	}
+
+	if client.ConnectMessage.Connected && client.conn != nil {
 		conn := client.conn.Conn()
 		if conn != nil {
 			_, local, _ := net.SplitHostPort(conn.LocalAddr().String())

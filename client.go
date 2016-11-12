@@ -1,8 +1,10 @@
 package lierc
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -136,6 +138,19 @@ func (client *IRCClient) Event() {
 			return
 		}
 	}
+}
+
+func (client *IRCClient) PortMap() (error, string, string) {
+	if client.ConnectMessage.Connected {
+		conn := client.conn.Conn()
+		if conn != nil {
+			_, local, _ := net.SplitHostPort(conn.LocalAddr().String())
+			_, remote, _ := net.SplitHostPort(conn.RemoteAddr().String())
+			return nil, local, remote
+		}
+	}
+
+	return errors.New("not connected"), "", ""
 }
 
 func (client *IRCClient) Reconnect() {

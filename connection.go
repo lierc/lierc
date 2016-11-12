@@ -124,6 +124,10 @@ func (conn *IRCConn) Close() {
 	}
 }
 
+func (conn *IRCConn) Conn() net.Conn {
+	return conn.conn
+}
+
 func (conn *IRCConn) Recv() {
 	for {
 		line, err := conn.reader.ReadString('\n')

@@ -52,14 +52,53 @@ func init() {
 	handlers["366"] = func(client *IRCClient, message *IRCMessage) {
 		name := message.Params[1]
 		if buff, ok := client.nickbuff[name]; ok {
-			nicks := make(map[string]bool)
+			nicks := make(map[string]string)
 			for _, nick := range buff {
-				nicks[nick] = true
+				if len(nick) == 0 {
+					continue
+				} else if nick[0] == 43 {
+					nicks[nick[1:]] = "v"
+				} else if nick[0] == 64 {
+					nicks[nick[1:]] = "o"
+				} else {
+					nicks[nick] = ""
+				}
 			}
 			if channel, ok := client.Channels[name]; ok {
 				channel.Nicks = nicks
 			}
 			delete(client.nickbuff, name)
+		}
+	}
+
+	handlers["MODE"] = func(client *IRCClient, message *IRCMessage) {
+		name := message.Params[0]
+		if message.Prefix.Name == name {
+			// global user mode hmm
+		} else if channel, ok := client.Channels[name]; ok {
+			action := message.Params[1][0]
+			modes := message.Params[1][1:]
+
+			for _, mode := range modes {
+				switch mode {
+				case 111: //o op
+					channel.SetNickMode(action, mode, message.Params[2])
+				case 118: // v voice
+					channel.SetNickMode(action, mode, message.Params[2])
+				case 112: // p private
+					channel.SetMode(action, mode)
+				case 115: // s secert
+					channel.SetMode(action, mode)
+				case 105: // i invite
+					channel.SetMode(action, mode)
+				case 116: // t topic
+					channel.SetMode(action, mode)
+				case 110: // n no messages?
+					channel.SetMode(action, mode)
+				case 109: // m moderated
+					channel.SetMode(action, mode)
+				}
+			}
 		}
 	}
 
@@ -70,11 +109,11 @@ func init() {
 			client.Channels[name] = &IRCChannel{
 				Topic: &IRCTopic{},
 				Name:  name,
-				Nicks: make(map[string]bool),
+				Nicks: make(map[string]string),
 			}
 		}
 		if channel, ok := client.Channels[name]; ok {
-			channel.Nicks[nick] = true
+			channel.Nicks[nick] = ""
 		}
 	}
 
@@ -162,8 +201,8 @@ func init() {
 		}
 		for name, channel := range client.Channels {
 			if _, ok := channel.Nicks[nick]; ok {
+				channel.Nicks[new_nick] = channel.Nicks[nick]
 				delete(channel.Nicks, nick)
-				channel.Nicks[new_nick] = true
 				channels = append(channels, name)
 			}
 		}

@@ -169,7 +169,7 @@ func init() {
 
 	handlers["324"] = func(client *IRCClient, message *IRCMessage) {
 		if channel, ok := client.Channels[message.Params[1]]; ok {
-			channel.Mode = string(message.Params[1][1:])
+			channel.Mode = string(message.Params[2][1:])
 		}
 	}
 

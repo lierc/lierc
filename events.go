@@ -186,8 +186,8 @@ func init() {
 	handlers["333"] = func(client *IRCClient, message *IRCMessage) {
 		if channel, ok := client.Channels[message.Params[1]]; ok {
 			time, _ := strconv.ParseInt(message.Params[3], 10, 64)
-			client.Channels[channel].Topic.Time = time
-			client.Channels[channel].Topic.User = message.Params[2]
+			channel.Topic.Time = time
+			channel.Topic.User = message.Params[2]
 		}
 	}
 

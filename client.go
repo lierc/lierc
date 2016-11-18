@@ -19,7 +19,6 @@ type IRCClient struct {
 	Config         *IRCConfig
 	Channels       map[string]*IRCChannel
 	Nick           string
-	nickbuff       map[string][]string
 	Registered     bool
 	ConnectMessage *IRCConnectMessage
 	Isupport       []string
@@ -62,7 +61,6 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		Registered: false,
 		Isupport:   make([]string, 0),
 		Channels:   make(map[string]*IRCChannel),
-		nickbuff:   make(map[string][]string),
 		connect:    connect,
 		incoming:   incoming,
 		debug:      os.Getenv("LIERC_DEBUG") != "",

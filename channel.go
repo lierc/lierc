@@ -11,10 +11,11 @@ type IRCTopic struct {
 }
 
 type IRCChannel struct {
-	Topic *IRCTopic
-	Nicks map[string]string
-	Name  string
-	Mode  string
+	Topic  *IRCTopic
+	Nicks  map[string]string
+	Name   string
+	Mode   string
+	Synced bool
 }
 
 func (channel *IRCChannel) SetMode(action byte, mode rune) {

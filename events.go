@@ -49,35 +49,26 @@ func init() {
 	}
 
 	handlers["353"] = func(client *IRCClient, message *IRCMessage) {
-		channel := message.Params[2]
-		nicks := strings.Split(message.Params[3], " ")
-		if _, ok := client.nickbuff[channel]; !ok {
-			client.nickbuff[channel] = make([]string, 0)
-		}
-		for _, nick := range nicks {
-			client.nickbuff[channel] = append(client.nickbuff[channel], nick)
+		if channel, ok := client.Channels[message.Params[2]]; ok {
+			if channel.Synced {
+				channel.Synced = false
+				channel.Nicks = make(map[string]string, 0)
+			}
+
+			nicks := strings.Split(message.Params[3], " ")
+			for _, nick := range nicks {
+				if mode, ok := client.prefixmap[nick[0]]; ok {
+					channel.Nicks[nick[1:]] = string(mode)
+				} else {
+					channel.Nicks[nick] = ""
+				}
+			}
 		}
 	}
 
 	handlers["366"] = func(client *IRCClient, message *IRCMessage) {
-		name := message.Params[1]
-		if buff, ok := client.nickbuff[name]; ok {
-			nicks := make(map[string]string)
-			for _, nick := range buff {
-				if len(nick) == 0 {
-					continue
-				}
-
-				if mode, ok := client.prefixmap[nick[0]]; ok {
-					nicks[nick[1:]] = string(mode)
-				} else {
-					nicks[nick] = ""
-				}
-			}
-			if channel, ok := client.Channels[name]; ok {
-				channel.Nicks = nicks
-			}
-			delete(client.nickbuff, name)
+		if channel, ok := client.Channels[message.Params[1]]; ok {
+			channel.Synced = true
 		}
 	}
 
@@ -111,9 +102,10 @@ func init() {
 		nick := message.Prefix.Name
 		if nick == client.Nick {
 			client.Channels[name] = &IRCChannel{
-				Topic: &IRCTopic{},
-				Name:  name,
-				Nicks: make(map[string]string),
+				Topic:  &IRCTopic{},
+				Name:   name,
+				Nicks:  make(map[string]string),
+				Synced: false,
 			}
 			client.Send(fmt.Sprintf("MODE %s", name))
 		}

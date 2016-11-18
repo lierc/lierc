@@ -23,6 +23,7 @@ type IRCClient struct {
 	Registered     bool
 	ConnectMessage *IRCConnectMessage
 	Isupport       []string
+	prefixmap      map[byte]byte
 	incoming       chan *IRCMessage
 	connect        chan *IRCConnectMessage
 	quit           chan bool
@@ -70,6 +71,10 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		quitting:   false,
 		Id:         Id,
 		mu:         &sync.Mutex{},
+		prefixmap: map[byte]byte{
+			0x40: 0x6f,
+			0x2b: 0x76,
+		},
 	}
 
 	go client.Event()

@@ -3,6 +3,7 @@ package lierc
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,9 +17,18 @@ func init() {
 		client.Welcome()
 	}
 
+	var prefix, _ = regexp.Compile("^PREFIX=\\(([^)]+)\\)(.+)$")
+
 	handlers["005"] = func(client *IRCClient, message *IRCMessage) {
 		for i := 1; i < len(message.Params)-1; i++ {
 			client.Isupport = append(client.Isupport, message.Params[i])
+			if res := prefix.FindStringSubmatch(message.Params[i]); res != nil {
+				for i, _ := range res[1] {
+					if len(res[2]) >= i {
+						client.prefixmap[res[2][i]] = res[1][i]
+					}
+				}
+			}
 		}
 	}
 
@@ -56,10 +66,10 @@ func init() {
 			for _, nick := range buff {
 				if len(nick) == 0 {
 					continue
-				} else if nick[0] == 43 {
-					nicks[nick[1:]] = "v"
-				} else if nick[0] == 64 {
-					nicks[nick[1:]] = "o"
+				}
+
+				if mode, ok := client.prefixmap[nick[0]]; ok {
+					nicks[nick[1:]] = string(mode)
 				} else {
 					nicks[nick] = ""
 				}

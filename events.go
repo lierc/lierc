@@ -23,9 +23,10 @@ func init() {
 		for i := 1; i < len(message.Params)-1; i++ {
 			client.Isupport = append(client.Isupport, message.Params[i])
 			if res := prefix.FindStringSubmatch(message.Params[i]); res != nil {
+				client.nickprefix = make([][]byte, 0)
 				for i, _ := range res[1] {
 					if len(res[2]) >= i {
-						client.prefixmap[res[2][i]] = res[1][i]
+						client.nickprefix = append(client.nickprefix, []byte{res[2][i], res[1][i]})
 					}
 				}
 			}
@@ -52,15 +53,15 @@ func init() {
 		if channel, ok := client.Channels[message.Params[2]]; ok {
 			if channel.Synced {
 				channel.Synced = false
-				channel.Nicks = make(map[string]string, 0)
+				channel.Nicks = make(map[string][]byte, 0)
 			}
 
 			nicks := strings.Split(message.Params[3], " ")
 			for _, nick := range nicks {
-				if mode, ok := client.prefixmap[nick[0]]; ok {
-					channel.Nicks[nick[1:]] = string(mode)
+				if mode, ok := client.NickPrefixMode(nick[0]); ok {
+					channel.Nicks[nick[1:]] = []byte{mode}
 				} else {
-					channel.Nicks[nick] = ""
+					channel.Nicks[nick] = []byte{}
 				}
 			}
 		}
@@ -78,20 +79,13 @@ func init() {
 			// global user mode hmm
 		} else if channel, ok := client.Channels[name]; ok {
 			action := message.Params[1][0]
-			modes := message.Params[1][1:]
+			modes := []byte(message.Params[1][1:])
 
 			for _, mode := range modes {
-				switch mode {
-				case 104: // h halfop
+				if client.IsNickMode(mode) {
 					channel.SetNickMode(action, mode, message.Params[2])
-				case 111: // o op
-					channel.SetNickMode(action, mode, message.Params[2])
-				case 118: // v voice
-					channel.SetNickMode(action, mode, message.Params[2])
-				default:
-					if len(message.Params) == 2 {
-						channel.SetMode(action, mode)
-					}
+				} else if len(message.Params) == 2 {
+					channel.SetMode(action, mode)
 				}
 			}
 		}
@@ -104,13 +98,13 @@ func init() {
 			client.Channels[name] = &IRCChannel{
 				Topic:  &IRCTopic{},
 				Name:   name,
-				Nicks:  make(map[string]string),
+				Nicks:  make(map[string][]byte),
 				Synced: false,
 			}
 			client.Send(fmt.Sprintf("MODE %s", name))
 		}
 		if channel, ok := client.Channels[name]; ok {
-			channel.Nicks[nick] = ""
+			channel.Nicks[nick] = []byte{}
 		}
 	}
 
@@ -171,7 +165,7 @@ func init() {
 
 	handlers["324"] = func(client *IRCClient, message *IRCMessage) {
 		if channel, ok := client.Channels[message.Params[1]]; ok {
-			channel.Mode = string(message.Params[2][1:])
+			channel.Mode = []byte(message.Params[2][1:])
 		}
 	}
 

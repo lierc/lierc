@@ -1,6 +1,8 @@
 package lierc
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -15,21 +17,22 @@ var Events = make(chan *IRCClientMessage)
 var Connects = make(chan *IRCConnectMessage)
 
 type IRCClient struct {
-	conn           *IRCConn
+	Id             string
 	Config         *IRCConfig
 	Channels       map[string]*IRCChannel
 	Nick           string
 	Registered     bool
 	ConnectMessage *IRCConnectMessage
 	Isupport       []string
-	prefixmap      map[byte]byte
+	conn           *IRCConn
+	nickprefix     [][]byte
+	chanprefix     []byte
 	incoming       chan *IRCMessage
 	connect        chan *IRCConnectMessage
 	quit           chan bool
 	quitting       bool
-	retries        int
+	Retries        int
 	debug          bool
-	Id             string
 	timer          *time.Timer
 	mu             *sync.Mutex
 }
@@ -69,10 +72,12 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		quitting:   false,
 		Id:         Id,
 		mu:         &sync.Mutex{},
-		prefixmap: map[byte]byte{
-			0x40: 0x6f,
-			0x2b: 0x76,
+		nickprefix: [][]byte{
+			[]byte{0x40, 0x6f}, // @ => o
+			[]byte{0x2b, 0x76}, // + => v
+			[]byte{0x25, 0x68}, // % => h
 		},
+		chanprefix: []byte{0x23, 0x26},
 	}
 
 	go client.Event()
@@ -166,8 +171,8 @@ func (client *IRCClient) Reconnect() {
 
 	client.Registered = false
 	client.Isupport = make([]string, 0)
-	client.retries = client.retries + 1
-	delay := 15 * client.retries
+	client.Retries = client.Retries + 1
+	delay := 15 * client.Retries
 	if delay > 300 {
 		delay = 300
 	}
@@ -210,7 +215,7 @@ func (client *IRCClient) Join() {
 
 func (client *IRCClient) Welcome() {
 	if !client.Registered {
-		client.retries = 0
+		client.Retries = 0
 		client.Registered = true
 		client.Join()
 	}
@@ -236,4 +241,78 @@ func (client *IRCClient) Register() {
 	))
 
 	client.Send(fmt.Sprintf("NICK %s", client.Config.Nick))
+}
+
+func (client *IRCClient) Nicks(channel *IRCChannel) []string {
+	names := make([]string, 0)
+	for nick, mode := range channel.Nicks {
+		names = append(names, client.NickPrefix(mode)+nick)
+	}
+	return names
+}
+
+func (client *IRCClient) NickPrefix(mode []byte) string {
+	for _, mapping := range client.nickprefix {
+		if bytes.IndexByte(mode, mapping[1]) != -1 {
+			return string(mapping[0])
+		}
+	}
+	return ""
+}
+
+func (client *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
+	for _, mapping := range client.nickprefix {
+		if prefix == mapping[0] {
+			return mapping[1], true
+		}
+	}
+	return 0, false
+}
+
+func (client *IRCClient) IsNickMode(mode byte) bool {
+	for _, mapping := range client.nickprefix {
+		if mode == mapping[1] {
+			return true
+		}
+	}
+	return false
+}
+
+type IRCChannelJSON struct {
+	Name  string
+	Nicks []string
+	Topic *IRCTopic
+	Mode  string
+}
+
+func (client *IRCClient) MarshalJSON() ([]byte, error) {
+	channels := make([]*IRCChannelJSON, 0)
+
+	for _, channel := range client.Channels {
+		data := &IRCChannelJSON{
+			Name:  channel.Name,
+			Nicks: client.Nicks(channel),
+			Topic: channel.Topic,
+			Mode:  "+" + string(channel.Mode),
+		}
+		channels = append(channels, data)
+	}
+
+	return json.Marshal(&struct {
+		Id             string
+		Config         *IRCConfig
+		Nick           string
+		Channels       []*IRCChannelJSON
+		Registered     bool
+		ConnectMessage *IRCConnectMessage
+		Isupport       []string
+	}{
+		Id:             client.Id,
+		Config:         client.Config,
+		Nick:           client.Nick,
+		Channels:       channels,
+		Registered:     client.Registered,
+		ConnectMessage: client.ConnectMessage,
+		Isupport:       client.Isupport,
+	})
 }

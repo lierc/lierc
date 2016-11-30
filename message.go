@@ -45,12 +45,12 @@ func ParseIRCMessage(line string) *IRCMessage {
 
 	if strings.Index(line, " :") != -1 {
 		x := strings.SplitN(line, " :", 2)
-		params := strings.Split(x[0], " ")
+		params := strings.Split(strings.TrimSpace(x[0]), " ")
 		params = append(params, x[1])
 		message.Command = params[0]
 		message.Params = params[1:]
 	} else {
-		x := strings.Split(line, " ")
+		x := strings.Split(strings.TrimSpace(line), " ")
 		message.Command = x[0]
 		message.Params = x[1:]
 	}

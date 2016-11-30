@@ -75,9 +75,7 @@ func (conn *IRCConn) Connect(server string, ssl bool) error {
 		conn.conn = c
 	}
 
-	conn.reader = bufio.NewReader(
-		bufio.NewReader(conn.conn),
-	)
+	conn.reader = bufio.NewReader(conn.conn)
 
 	if conn.debug {
 		log.Printf("%s Connected to %s", conn.id, server)

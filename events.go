@@ -58,10 +58,12 @@ func init() {
 
 			nicks := strings.Split(message.Params[3], " ")
 			for _, nick := range nicks {
-				if mode, ok := client.NickPrefixMode(nick[0]); ok {
-					channel.Nicks[nick[1:]] = []byte{mode}
-				} else {
-					channel.Nicks[nick] = []byte{}
+				if len(nick) > 0 {
+					if mode, ok := client.NickPrefixMode(nick[0]); ok {
+						channel.Nicks[nick[1:]] = []byte{mode}
+					} else {
+						channel.Nicks[nick] = []byte{}
+					}
 				}
 			}
 		}

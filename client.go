@@ -25,8 +25,8 @@ type IRCClient struct {
 	ConnectMessage *IRCConnectMessage
 	Isupport       []string
 	conn           *IRCConn
-	nickprefix     [][]byte
-	chanprefix     []byte
+	prefix         [][]byte
+	chantypes      []byte
 	incoming       chan *IRCMessage
 	connect        chan *IRCConnectMessage
 	quit           chan bool
@@ -72,12 +72,12 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		quitting:   false,
 		Id:         Id,
 		mu:         &sync.Mutex{},
-		nickprefix: [][]byte{
+		prefix: [][]byte{
 			[]byte{0x40, 0x6f}, // @ => o
 			[]byte{0x2b, 0x76}, // + => v
 			[]byte{0x25, 0x68}, // % => h
 		},
-		chanprefix: []byte{0x23, 0x26},
+		chantypes: []byte{0x23, 0x26},
 	}
 
 	go client.Event()
@@ -252,7 +252,7 @@ func (client *IRCClient) Nicks(channel *IRCChannel) []string {
 }
 
 func (client *IRCClient) NickPrefix(mode []byte) string {
-	for _, mapping := range client.nickprefix {
+	for _, mapping := range client.prefix {
 		if bytes.IndexByte(mode, mapping[1]) != -1 {
 			return string(mapping[0])
 		}
@@ -261,7 +261,7 @@ func (client *IRCClient) NickPrefix(mode []byte) string {
 }
 
 func (client *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
-	for _, mapping := range client.nickprefix {
+	for _, mapping := range client.prefix {
 		if prefix == mapping[0] {
 			return mapping[1], true
 		}
@@ -270,7 +270,7 @@ func (client *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
 }
 
 func (client *IRCClient) IsNickMode(mode byte) bool {
-	for _, mapping := range client.nickprefix {
+	for _, mapping := range client.prefix {
 		if mode == mapping[1] {
 			return true
 		}

@@ -17,6 +17,7 @@ var Events = make(chan *IRCClientMessage)
 var Connects = make(chan *IRCConnectMessage)
 
 type IRCClient struct {
+	sync.Mutex
 	Id             string
 	Config         *IRCConfig
 	Channels       map[string]*IRCChannel
@@ -24,17 +25,16 @@ type IRCClient struct {
 	Registered     bool
 	ConnectMessage *IRCConnectMessage
 	Isupport       []string
-	conn           *IRCConn
+	irc            *IRCConn
 	prefix         [][]byte
 	chantypes      []byte
 	incoming       chan *IRCMessage
 	connect        chan *IRCConnectMessage
-	quit           chan bool
+	quit           chan struct{}
 	quitting       bool
 	Retries        int
 	debug          bool
 	timer          *time.Timer
-	mu             *sync.Mutex
 }
 
 type IRCConnectMessage struct {
@@ -59,7 +59,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 	incoming := make(chan *IRCMessage)
 
 	client := &IRCClient{
-		conn:       NewIRCConn(incoming, connect, Id),
+		irc:        NewIRCConn(incoming, connect, Id),
 		Config:     config,
 		Registered: false,
 		Isupport:   make([]string, 0),
@@ -68,28 +68,27 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		incoming:   incoming,
 		debug:      os.Getenv("LIERC_DEBUG") != "",
 		Nick:       config.Nick,
-		quit:       make(chan bool),
+		quit:       make(chan struct{}),
 		quitting:   false,
 		Id:         Id,
-		mu:         &sync.Mutex{},
 		prefix: [][]byte{
-			[]byte{0x40, 0x6f}, // @ => o
-			[]byte{0x2b, 0x76}, // + => v
-			[]byte{0x25, 0x68}, // % => h
+			[]byte{'@', 'o'},
+			[]byte{'+', 'v'},
+			[]byte{'%', 'h'},
 		},
-		chantypes: []byte{0x23, 0x26},
+		chantypes: []byte{'#', '&'},
 	}
 
 	go client.Event()
-	go client.conn.Connect(config.Server(), config.Ssl)
+	go client.irc.Connect(config.Server(), config.Ssl)
 
 	return client
 }
 
 func (client *IRCClient) Destroy() {
-	client.mu.Lock()
+	client.Lock()
 	client.quitting = true
-	client.mu.Unlock()
+	client.Unlock()
 
 	if client.timer != nil {
 		client.timer.Stop()
@@ -98,7 +97,8 @@ func (client *IRCClient) Destroy() {
 	client.Send("QUIT bye")
 
 	time.AfterFunc(2*time.Second, func() {
-		client.quit <- true
+		client.irc.Close()
+		close(client.quit)
 	})
 }
 
@@ -107,7 +107,7 @@ func (client *IRCClient) Send(line string) {
 		log.Printf("%s ---> %s", client.Id, line)
 	}
 	if client.ConnectMessage.Connected {
-		client.conn.outgoing <- line
+		client.irc.outgoing <- line
 	}
 }
 
@@ -128,21 +128,20 @@ func (client *IRCClient) Event() {
 		case connect := <-client.connect:
 			connect.Id = client.Id
 
-			client.mu.Lock()
+			client.Lock()
 			client.ConnectMessage = connect
-			client.mu.Unlock()
+			client.Unlock()
 
 			Connects <- connect
 			if connect.Connected {
 				client.Register()
 			} else if client.quitting {
-				client.conn.quit <- true
 				return
 			} else {
+				client.irc.Close()
 				client.Reconnect()
 			}
 		case <-client.quit:
-			client.conn.quit <- true
 			return
 		}
 	}
@@ -153,11 +152,11 @@ func (client *IRCClient) PortMap() (error, string, string) {
 		return errors.New("not connected"), "", ""
 	}
 
-	if client.ConnectMessage.Connected && client.conn != nil {
-		conn := client.conn.Conn()
-		if conn != nil {
-			_, local, _ := net.SplitHostPort(conn.LocalAddr().String())
-			_, remote, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	if client.ConnectMessage.Connected && client.irc != nil {
+		socket := client.irc.Socket()
+		if socket != nil {
+			_, local, _ := net.SplitHostPort(socket.LocalAddr().String())
+			_, remote, _ := net.SplitHostPort(socket.RemoteAddr().String())
 			return nil, local, remote
 		}
 	}
@@ -166,8 +165,8 @@ func (client *IRCClient) PortMap() (error, string, string) {
 }
 
 func (client *IRCClient) Reconnect() {
-	client.mu.Lock()
-	defer client.mu.Unlock()
+	client.Lock()
+	defer client.Unlock()
 
 	client.Registered = false
 	client.Isupport = make([]string, 0)
@@ -182,14 +181,14 @@ func (client *IRCClient) Reconnect() {
 	}
 	client.timer = time.AfterFunc(seconds, func() {
 		config := client.Config
-		client.conn = NewIRCConn(client.incoming, client.connect, client.Id)
-		client.conn.Connect(config.Server(), config.Ssl)
+		client.irc = NewIRCConn(client.incoming, client.connect, client.Id)
+		client.irc.Connect(config.Server(), config.Ssl)
 	})
 }
 
 func (client *IRCClient) Message(message *IRCMessage) bool {
-	client.mu.Lock()
-	defer client.mu.Unlock()
+	client.Lock()
+	defer client.Unlock()
 
 	if handler, ok := handlers[message.Command]; ok {
 		handler(client, message)

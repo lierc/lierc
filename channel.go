@@ -18,14 +18,11 @@ type IRCChannel struct {
 	Synced bool
 }
 
-const ADD byte = 0x2b // "+"
-const REM byte = 0x2d // "-"
-
 func (channel *IRCChannel) SetMode(action byte, mode byte) {
 	switch action {
-	case ADD:
+	case '+':
 		channel.Mode = AddMode(channel.Mode, mode)
-	case REM:
+	case '-':
 		channel.Mode = RemoveMode(channel.Mode, mode)
 	}
 }
@@ -33,9 +30,9 @@ func (channel *IRCChannel) SetMode(action byte, mode byte) {
 func (channel *IRCChannel) SetNickMode(action byte, mode byte, nick string) {
 	if modes, ok := channel.Nicks[nick]; ok {
 		switch action {
-		case ADD:
+		case '+':
 			channel.Nicks[nick] = AddMode(modes, mode)
-		case REM:
+		case '-':
 			channel.Nicks[nick] = RemoveMode(modes, mode)
 		}
 	}

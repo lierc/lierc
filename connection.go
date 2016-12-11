@@ -17,7 +17,7 @@ type IRCConn struct {
 	incoming  chan *IRCMessage
 	outgoing  chan string
 	connect   chan *IRCConnectMessage
-	quit      chan struct{}
+	end       chan struct{}
 	reader    *bufio.Reader
 	socket    net.Conn
 	id        string
@@ -32,7 +32,7 @@ func NewIRCConn(incoming chan *IRCMessage, connect chan *IRCConnectMessage, Id s
 	irc := &IRCConn{
 		incoming:  incoming,
 		outgoing:  make(chan string),
-		quit:      make(chan struct{}),
+		end:       make(chan struct{}),
 		pingfreq:  15 * time.Minute,
 		keepalive: 4 * time.Minute,
 		timeout:   1 * time.Minute,
@@ -109,7 +109,7 @@ func (irc *IRCConn) Send() {
 	for {
 		select {
 
-		case <-irc.quit:
+		case <-irc.end:
 			return
 
 		case line := <-irc.outgoing:
@@ -143,7 +143,7 @@ func (irc *IRCConn) Send() {
 }
 
 func (irc *IRCConn) Close() {
-	close(irc.quit)
+	close(irc.end)
 	if irc.socket != nil {
 		irc.socket.Close()
 	}
@@ -163,7 +163,7 @@ func (irc *IRCConn) Recv() {
 	for {
 		select {
 
-		case <-irc.quit:
+		case <-irc.end:
 			return
 
 		default:

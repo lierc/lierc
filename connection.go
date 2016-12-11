@@ -149,8 +149,14 @@ func (irc *IRCConn) Close() {
 	}
 }
 
-func (irc *IRCConn) Socket() net.Conn {
-	return irc.socket
+func (irc *IRCConn) PortMap() (error, string, string) {
+	if irc.socket != nil {
+		_, local, _ := net.SplitHostPort(irc.socket.LocalAddr().String())
+		_, remote, _ := net.SplitHostPort(irc.socket.RemoteAddr().String())
+		return nil, local, remote
+	}
+
+	return fmt.Errorf("Not connected"), "", ""
 }
 
 func (irc *IRCConn) Recv() {

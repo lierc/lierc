@@ -146,7 +146,10 @@ func (client *IRCClient) Event() {
 }
 
 func (client *IRCClient) PortMap() (error, string, string) {
-	return client.irc.PortMap()
+	if client.irc != nil {
+		return client.irc.PortMap()
+	}
+	return fmt.Errorf("Not connected"), "", ""
 }
 
 func (client *IRCClient) Reconnect() {

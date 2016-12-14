@@ -98,20 +98,34 @@ func (irc *IRCConn) Connect(server string, ssl bool) error {
 
 	go irc.Send()
 	go irc.Recv()
+	go irc.Ping()
 
 	return nil
 }
 
-func (irc *IRCConn) Send() {
+func (irc *IRCConn) Ping() {
 	keepalive := time.NewTicker(1 * time.Minute)
 	ping := time.NewTicker(irc.pingfreq)
 
 	for {
 		select {
-
 		case <-irc.end:
 			return
+		case <-keepalive.C:
+			if time.Since(irc.lastmsg) >= irc.keepalive {
+				irc.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
+			}
+		case <-ping.C:
+			irc.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
+		}
+	}
+}
 
+func (irc *IRCConn) Send() {
+	for {
+		select {
+		case <-irc.end:
+			return
 		case line := <-irc.outgoing:
 			irc.socket.SetWriteDeadline(time.Now().Add(irc.timeout))
 			_, err := irc.socket.Write([]byte(line + "\r\n"))
@@ -130,14 +144,6 @@ func (irc *IRCConn) Send() {
 				irc.Close()
 				return
 			}
-
-		case <-keepalive.C:
-			if time.Since(irc.lastmsg) >= irc.keepalive {
-				irc.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
-			}
-
-		case <-ping.C:
-			irc.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
 		}
 	}
 }
@@ -162,10 +168,8 @@ func (irc *IRCConn) PortMap() (error, string, string) {
 func (irc *IRCConn) Recv() {
 	for {
 		select {
-
 		case <-irc.end:
 			return
-
 		default:
 			if irc.socket != nil {
 				irc.socket.SetReadDeadline(time.Now().Add(irc.timeout + irc.pingfreq))

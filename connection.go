@@ -141,7 +141,6 @@ func (irc *IRCConn) Send() {
 					Connected: false,
 					Message:   err.Error(),
 				}
-				irc.Close()
 				return
 			}
 		}
@@ -186,7 +185,6 @@ func (irc *IRCConn) Recv() {
 				if irc.debug {
 					log.Printf("%s Error reading %v", irc.id, err)
 				}
-				irc.Close()
 				irc.connect <- &IRCConnectMessage{
 					Connected: false,
 					Message:   err.Error(),

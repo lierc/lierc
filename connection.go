@@ -137,18 +137,21 @@ func (irc *IRCConn) Send() {
 				if irc.debug {
 					log.Printf("%s Error writing %v", irc.id, err)
 				}
-				irc.connect <- &IRCConnectMessage{
-					Connected: false,
-					Message:   err.Error(),
-				}
-				return
+				irc.Error(err)
 			}
 		}
 	}
 }
 
-func (irc *IRCConn) Close() {
+func (irc *IRCConn) Error(err error) {
 	close(irc.end)
+	irc.connect <- &IRCConnectMessage{
+		Connected: false,
+		Message:   err.Error(),
+	}
+}
+
+func (irc *IRCConn) Close() {
 	if irc.socket != nil {
 		irc.socket.Close()
 	}
@@ -185,19 +188,15 @@ func (irc *IRCConn) Recv() {
 				if irc.debug {
 					log.Printf("%s Error reading %v", irc.id, err)
 				}
-				irc.connect <- &IRCConnectMessage{
-					Connected: false,
-					Message:   err.Error(),
-				}
-				return
+				irc.Error(err)
+			} else {
+				line = strings.TrimSuffix(line, "\r\n")
+				message := ParseIRCMessage(line)
+				irc.Lock()
+				irc.lastmsg = time.Now()
+				irc.Unlock()
+				irc.incoming <- message
 			}
-
-			line = strings.TrimSuffix(line, "\r\n")
-			message := ParseIRCMessage(line)
-			irc.Lock()
-			irc.lastmsg = time.Now()
-			irc.Unlock()
-			irc.incoming <- message
 		}
 	}
 }

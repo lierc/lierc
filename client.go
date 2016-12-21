@@ -136,10 +136,7 @@ func (client *IRCClient) Event() {
 			Connects <- connect
 			if connect.Connected {
 				client.Register()
-			} else if client.quitting {
-				return
-			} else {
-				client.irc.Close()
+			} else if !client.quitting {
 				client.Reconnect()
 			}
 		case <-client.quit:

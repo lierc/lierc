@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -31,7 +32,7 @@ type IRCClient struct {
 	quit           chan struct{}
 	quitting       bool
 	Retries        int
-	debug          bool
+	debug          int64
 	timer          *time.Timer
 }
 
@@ -52,12 +53,23 @@ type IRCClientMessage struct {
 	Message *IRCMessage
 }
 
+func LogLevel(env string) int64 {
+	if env == "" {
+		return 0
+	} else {
+		i, err := strconv.ParseInt(env, 10, 0)
+		if err != nil {
+			panic(err)
+		}
+		return i
+	}
+}
+
 func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 	connect := make(chan *IRCConnectMessage)
 	incoming := make(chan *IRCMessage)
 
 	client := &IRCClient{
-		irc:        NewIRCConn(incoming, connect, Id),
 		Config:     config,
 		Registered: false,
 		Isupport:   make([]string, 0),
@@ -67,7 +79,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		},
 		connect:  connect,
 		incoming: incoming,
-		debug:    os.Getenv("LIERC_DEBUG") != "",
+		debug:    LogLevel(os.Getenv("LIERC_DEBUG")),
 		Nick:     config.Nick,
 		quit:     make(chan struct{}),
 		quitting: false,
@@ -80,10 +92,26 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		chantypes: []byte{'#', '&'},
 	}
 
+	client.irc = client.CreateConn()
+
 	go client.Event()
 	go client.irc.Connect(config.Server(), config.Ssl)
 
 	return client
+}
+
+func (client *IRCClient) CreateConn() *IRCConn {
+	return &IRCConn{
+		incoming:  client.incoming,
+		outgoing:  make(chan string),
+		end:       make(chan struct{}),
+		pingfreq:  15 * time.Minute,
+		keepalive: 4 * time.Minute,
+		timeout:   1 * time.Minute,
+		connect:   client.connect,
+		id:        client.Id,
+		debug:     client.debug,
+	}
 }
 
 func (client *IRCClient) Destroy() {
@@ -104,7 +132,7 @@ func (client *IRCClient) Destroy() {
 }
 
 func (client *IRCClient) Send(line string) {
-	if client.debug {
+	if client.debug > 1 {
 		log.Printf("%s ---> %s", client.Id, line)
 	}
 	if client.ConnectMessage.Connected {
@@ -116,7 +144,7 @@ func (client *IRCClient) Event() {
 	for {
 		select {
 		case message := <-client.incoming:
-			if client.debug {
+			if client.debug > 1 {
 				log.Printf("%s <--- %s", client.Id, message.Raw)
 			}
 			if client.Message(message) {
@@ -164,12 +192,12 @@ func (client *IRCClient) Reconnect() {
 		delay = 300
 	}
 	seconds := time.Duration(delay) * time.Second
-	if client.debug {
+	if client.debug > 0 {
 		log.Printf("%s Reconnecting in %s", client.Id, seconds)
 	}
 	client.timer = time.AfterFunc(seconds, func() {
 		config := client.Config
-		client.irc = NewIRCConn(client.incoming, client.connect, client.Id)
+		client.irc = client.CreateConn()
 		client.irc.Connect(config.Server(), config.Ssl)
 	})
 }

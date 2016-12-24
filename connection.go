@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,74 +20,45 @@ type IRCConn struct {
 	reader    *bufio.Reader
 	socket    net.Conn
 	id        string
-	debug     bool
+	debug     int64
 	pingfreq  time.Duration
 	timeout   time.Duration
 	keepalive time.Duration
 	lastmsg   time.Time
 }
 
-func NewIRCConn(incoming chan *IRCMessage, connect chan *IRCConnectMessage, Id string) *IRCConn {
-	irc := &IRCConn{
-		incoming:  incoming,
-		outgoing:  make(chan string),
-		end:       make(chan struct{}),
-		pingfreq:  15 * time.Minute,
-		keepalive: 4 * time.Minute,
-		timeout:   1 * time.Minute,
-		connect:   connect,
-		id:        Id,
-		debug:     os.Getenv("LIERC_DEBUG") != "",
-	}
-
-	return irc
-}
-
 func (irc *IRCConn) Connect(server string, ssl bool) error {
-	if irc.debug {
+	if irc.debug > 0 {
 		log.Printf("%s Connecting to %s", irc.id, server)
 	}
+
+	var c net.Conn
+	var err error
 
 	if ssl {
 		conf := &tls.Config{
 			InsecureSkipVerify: true,
 		}
-
-		c, err := tls.Dial("tcp", server, conf)
-
-		if err != nil {
-			if irc.debug {
-				log.Printf("%s connection failed: %v", irc.id, err)
-			}
-			irc.connect <- &IRCConnectMessage{
-				Connected: false,
-				Message:   err.Error(),
-			}
-			return err
-		}
-
-		irc.socket = c
-
+		c, err = tls.Dial("tcp", server, conf)
 	} else {
-		c, err := net.Dial("tcp", server)
-
-		if err != nil {
-			if irc.debug {
-				log.Printf("%s connection failed: %v", irc.id, err)
-			}
-			irc.connect <- &IRCConnectMessage{
-				Connected: false,
-				Message:   err.Error(),
-			}
-			return err
-		}
-
-		irc.socket = c
+		c, err = net.Dial("tcp", server)
 	}
 
+	if err != nil {
+		if irc.debug > 0 {
+			log.Printf("%s connection failed: %v", irc.id, err)
+		}
+		irc.connect <- &IRCConnectMessage{
+			Connected: false,
+			Message:   err.Error(),
+		}
+		return err
+	}
+
+	irc.socket = c
 	irc.reader = bufio.NewReaderSize(irc.socket, 512)
 
-	if irc.debug {
+	if irc.debug > 1 {
 		log.Printf("%s Connected to %s", irc.id, server)
 	}
 
@@ -134,7 +104,7 @@ func (irc *IRCConn) Send() {
 			irc.socket.SetWriteDeadline(zero)
 
 			if err != nil {
-				if irc.debug {
+				if irc.debug > 1 {
 					log.Printf("%s Error writing %v", irc.id, err)
 				}
 				irc.Error(err)
@@ -185,7 +155,7 @@ func (irc *IRCConn) Recv() {
 			}
 
 			if err != nil {
-				if irc.debug {
+				if irc.debug > 1 {
 					log.Printf("%s Error reading %v", irc.id, err)
 				}
 				irc.Error(err)

@@ -159,7 +159,7 @@ func (irc *IRCConn) Recv() {
 					log.Printf("%s Error reading %v", irc.id, err)
 				}
 				irc.Error(err)
-			} else {
+			} else if len(line) > 0 {
 				line = strings.TrimSuffix(line, "\r\n")
 				message := ParseIRCMessage(line)
 				irc.Lock()

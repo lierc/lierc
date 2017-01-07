@@ -104,7 +104,7 @@ func (irc *IRCConn) Send() {
 			irc.socket.SetWriteDeadline(zero)
 
 			if err != nil {
-				if irc.debug > 1 {
+				if irc.debug > 0 {
 					log.Printf("%s Error writing %v", irc.id, err)
 				}
 				irc.Error(err)
@@ -155,7 +155,7 @@ func (irc *IRCConn) Recv() {
 			}
 
 			if err != nil {
-				if irc.debug > 1 {
+				if irc.debug > 0 {
 					log.Printf("%s Error reading %v", irc.id, err)
 				}
 				irc.Error(err)

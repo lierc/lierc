@@ -123,12 +123,12 @@ func (client *IRCClient) Destroy() {
 		client.timer.Stop()
 	}
 
-	client.Send("QUIT bye")
-
 	time.AfterFunc(2*time.Second, func() {
 		client.irc.Close()
 		close(client.quit)
 	})
+
+	client.Send("QUIT bye")
 }
 
 func (client *IRCClient) Send(line string) {

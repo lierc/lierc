@@ -93,6 +93,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 	}
 
 	client.irc = client.CreateConn()
+	Connects <- client
 
 	go client.Event()
 	go client.irc.Connect(config.Server(), config.Ssl)
@@ -161,7 +162,7 @@ func (client *IRCClient) Event() {
 			client.ConnectMessage = connect
 			client.Unlock()
 
-			Connects <- connect
+			Connects <- client
 			if connect.Connected {
 				client.Register()
 			} else if !client.quitting {

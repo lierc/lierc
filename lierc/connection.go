@@ -32,11 +32,6 @@ func (irc *IRCConn) Connect(server string, ssl bool) error {
 		log.Printf("%s Connecting to %s", irc.id, server)
 	}
 
-	irc.connect <- &IRCConnectMessage{
-		Connected: false,
-		Message:   "Connecting",
-	}
-
 	var c net.Conn
 	var err error
 

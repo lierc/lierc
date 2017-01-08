@@ -13,7 +13,7 @@ import (
 
 var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
-var Connects = make(chan *IRCConnectMessage)
+var Connects = make(chan *IRCClient)
 
 type IRCClient struct {
 	sync.Mutex

@@ -8,6 +8,7 @@ import (
 	"github.com/lierc/lierc/lierc"
 	"github.com/nsqio/go-nsq"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -19,6 +20,7 @@ type LoggedMessage struct {
 	Self         bool
 }
 
+var hostname, _ = os.Hostname()
 var loggable = map[string]string{
 	"PRIVMSG": "#",
 	"JOIN":    "#",
@@ -118,18 +120,30 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		var line string
+		var line = ":" + hostname
+
+		host := client.Config.Host + ":" + strconv.Itoa(client.Config.Port)
+
 		if client.ConnectMessage.Connected {
-			line = "CONNECT"
+			line = "CONNECT " + host
 		} else {
-			line = "DISCONNECT"
+			line = "DISCONNECT " + host
 			if len(client.ConnectMessage.Message) > 0 {
 				line += " :" + client.ConnectMessage.Message
 			}
 		}
 
 		parsed := lierc.ParseIRCMessage(line)
-		_ = insertMessage(db, client.Id, parsed, "status", false)
+		id := insertMessage(db, client.Id, parsed, "status", false)
+
+		event := &LoggedMessage{
+			Message:      parsed,
+			ConnectionId: client.Id,
+			MessageId:    id,
+			Self:         false,
+		}
+
+		send_event <- event
 		return nil
 	}))
 

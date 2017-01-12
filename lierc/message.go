@@ -29,7 +29,7 @@ func ParseIRCMessage(line string) *IRCMessage {
 		Time:   now,
 	}
 
-	if line[0] == 58 {
+	if line[0] == ':' {
 		x := strings.SplitN(line[1:], " ", 2)
 		y := strings.SplitN(x[0], "!", 2)
 		message.Prefix.Name = y[0]

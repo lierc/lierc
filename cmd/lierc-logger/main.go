@@ -111,6 +111,28 @@ func main() {
 		return nil
 	}))
 
+	connects, _ := nsq.NewConsumer("connect", "logger", nsq_config)
+	connects.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
+		client := lierc.IRCClientData{}
+		err := json.Unmarshal(message.Body, &client)
+		if err != nil {
+			panic(err)
+		}
+		var line string
+		if client.ConnectMessage.Connected {
+			line = "CONNECT"
+		} else {
+			line = "DISCONNECT"
+			if len(client.ConnectMessage.Message) > 0 {
+				line += " :" + client.ConnectMessage.Message
+			}
+		}
+
+		parsed := lierc.ParseIRCMessage(line)
+		_ = insertMessage(db, client.Id, parsed, "status", false)
+		return nil
+	}))
+
 	multi, _ := nsq.NewConsumer("multi", "logger", nsq_config)
 	multi.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
 		multi_message := lierc.IRCClientMultiMessage{}
@@ -194,6 +216,7 @@ func main() {
 	chats.ConnectToNSQD(nsqd)
 	multi.ConnectToNSQD(nsqd)
 	priv.ConnectToNSQD(nsqd)
+	connects.ConnectToNSQD(nsqd)
 
 	fmt.Print("Ready!\n")
 	wg.Wait()

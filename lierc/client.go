@@ -294,7 +294,17 @@ func (client *IRCClient) IsNickMode(mode byte) bool {
 	return false
 }
 
-type IRCChannelJSON struct {
+type IRCClientData struct {
+	Id             string
+	Config         *IRCConfig
+	Nick           string
+	Channels       []*IRCChannelData
+	Registered     bool
+	ConnectMessage *IRCConnectMessage
+	Isupport       []string
+}
+
+type IRCChannelData struct {
 	Name  string
 	Nicks []string
 	Topic *IRCTopic
@@ -302,10 +312,10 @@ type IRCChannelJSON struct {
 }
 
 func (client *IRCClient) MarshalJSON() ([]byte, error) {
-	channels := make([]*IRCChannelJSON, 0)
+	channels := make([]*IRCChannelData, 0)
 
 	for _, channel := range client.Channels {
-		data := &IRCChannelJSON{
+		data := &IRCChannelData{
 			Name:  channel.Name,
 			Nicks: client.Nicks(channel),
 			Topic: channel.Topic,
@@ -314,15 +324,7 @@ func (client *IRCClient) MarshalJSON() ([]byte, error) {
 		channels = append(channels, data)
 	}
 
-	return json.Marshal(&struct {
-		Id             string
-		Config         *IRCConfig
-		Nick           string
-		Channels       []*IRCChannelJSON
-		Registered     bool
-		ConnectMessage *IRCConnectMessage
-		Isupport       []string
-	}{
+	return json.Marshal(&IRCClientData{
 		Id:             client.Id,
 		Config:         client.Config,
 		Nick:           client.Nick,

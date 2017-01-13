@@ -23,12 +23,12 @@ type ClientPrivmsg struct {
 
 type ClientManager struct {
 	mu      *sync.RWMutex
-	clients map[string]*lierc.IRCClient
+	Clients map[string]*lierc.IRCClient
 }
 
 func NewClientManager() *ClientManager {
 	manager := &ClientManager{
-		clients: make(map[string]*lierc.IRCClient),
+		Clients: make(map[string]*lierc.IRCClient),
 		mu:      &sync.RWMutex{},
 	}
 
@@ -39,7 +39,7 @@ func (manager *ClientManager) GetClient(uuid string) (*lierc.IRCClient, error) {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
-	if client, ok := manager.clients[uuid]; ok {
+	if client, ok := manager.Clients[uuid]; ok {
 		return client, nil
 	}
 
@@ -50,13 +50,13 @@ func (manager *ClientManager) GetClient(uuid string) (*lierc.IRCClient, error) {
 func (manager *ClientManager) AddClient(client *lierc.IRCClient) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	manager.clients[client.Id] = client
+	manager.Clients[client.Id] = client
 }
 
 func (manager *ClientManager) RemoveClient(client *lierc.IRCClient) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	delete(manager.clients, client.Id)
+	delete(manager.Clients, client.Id)
 }
 
 func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 
 		portmap := make([][]string, 0)
 
-		for _, client := range manager.clients {
+		for _, client := range manager.Clients {
 			err, local, remote := client.PortMap()
 			if err == nil {
 				user := client.Config.User

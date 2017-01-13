@@ -121,7 +121,7 @@ func (client *IRCClient) Destroy() {
 	client.Lock()
 	client.quitting = true
 	client.wg = &sync.WaitGroup{}
-	client.ConnectMessage.Message = "Closing connecting"
+	client.ConnectMessage.Message = "Closing connection"
 	client.Unlock()
 
 	client.wg.Add(1)

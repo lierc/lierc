@@ -64,6 +64,7 @@ func (irc *IRCConn) Connect(server string, ssl bool) error {
 
 	irc.connect <- &IRCConnectMessage{
 		Connected: true,
+		Message:   "Connected",
 	}
 
 	go irc.Send()

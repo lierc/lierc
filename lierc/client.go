@@ -76,6 +76,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		Channels:   make(map[string]*IRCChannel),
 		ConnectMessage: &IRCConnectMessage{
 			Connected: false,
+			Message:   "Connecting",
 		},
 		connect:  connect,
 		incoming: incoming,
@@ -196,6 +197,14 @@ func (client *IRCClient) Reconnect() {
 	if client.debug > 0 {
 		log.Printf("%s Reconnecting in %s", client.Id, seconds)
 	}
+
+	client.ConnectMessage = &IRCConnectMessage{
+		Connected: false,
+		Message:   fmt.Sprintf("Reconnecting in %d seconds", seconds),
+	}
+
+	Connects <- client
+
 	client.timer = time.AfterFunc(seconds, func() {
 		config := client.Config
 		client.irc = client.CreateConn()

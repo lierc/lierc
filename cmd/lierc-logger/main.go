@@ -122,15 +122,16 @@ func main() {
 		}
 		var line = ":" + hostname
 
-		host := client.Config.Host + ":" + strconv.Itoa(client.Config.Port)
-
 		if client.ConnectMessage.Connected {
-			line = "CONNECT " + host
+			line += " CONNECT "
 		} else {
-			line = "DISCONNECT " + host
-			if len(client.ConnectMessage.Message) > 0 {
-				line += " :" + client.ConnectMessage.Message
-			}
+			line += " DISCONNECT "
+		}
+
+		line += client.Config.Host + " " + strconv.Itoa(client.Config.Port)
+
+		if len(client.ConnectMessage.Message) > 0 {
+			line += " :" + client.ConnectMessage.Message
 		}
 
 		parsed := lierc.ParseIRCMessage(line)

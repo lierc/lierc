@@ -34,6 +34,7 @@ type IRCClient struct {
 	Retries        int
 	debug          int64
 	timer          *time.Timer
+	wg             *sync.WaitGroup
 }
 
 type IRCConnectMessage struct {
@@ -119,18 +120,27 @@ func (client *IRCClient) CreateConn() *IRCConn {
 func (client *IRCClient) Destroy() {
 	client.Lock()
 	client.quitting = true
+	client.wg = &sync.WaitGroup{}
+	client.ConnectMessage.Message = "Closing connecting"
 	client.Unlock()
+
+	client.wg.Add(1)
 
 	if client.timer != nil {
 		client.timer.Stop()
 	}
 
-	time.AfterFunc(2*time.Second, func() {
+	timer := time.AfterFunc(2*time.Second, func() {
 		client.irc.Close()
 		close(client.quit)
+		client.wg.Done()
 	})
 
+	Connects <- client
+
 	client.Send("QUIT bye")
+	client.wg.Wait()
+	timer.Stop()
 }
 
 func (client *IRCClient) Send(line string) {
@@ -168,6 +178,8 @@ func (client *IRCClient) Event() {
 				client.Register()
 			} else if !client.quitting {
 				client.Reconnect()
+			} else {
+				client.wg.Done()
 			}
 		case <-client.quit:
 			return

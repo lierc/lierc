@@ -4,14 +4,25 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/lierc/lierc/lierc"
 	"github.com/nsqio/go-nsq"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+type Highlighters struct {
+	sync.RWMutex
+	connection map[string]*regexp.Regexp
+}
+
+var highlighters = &Highlighters{
+	connection: make(map[string]*regexp.Regexp),
+}
 
 type LoggedMessage struct {
 	Message      *lierc.IRCMessage
@@ -66,6 +77,9 @@ func main() {
 		panic(err)
 	}
 
+	updateHighlighters(db)
+	setupHighlightListener(dsn, db)
+
 	send_event := make(chan *LoggedMessage)
 
 	go func() {
@@ -100,16 +114,15 @@ func main() {
 			return nil
 		}
 
-		id := insertMessage(db, privmsg.Id, parsed, parsed.Params[0], true)
+		id := insertMessage(db, privmsg.Id, parsed, parsed.Params[0], true, false)
 
-		event := &LoggedMessage{
+		send_event <- &LoggedMessage{
 			MessageId:    id,
 			Message:      parsed,
 			ConnectionId: privmsg.Id,
 			Self:         true,
 		}
 
-		send_event <- event
 		return nil
 	}))
 
@@ -135,16 +148,15 @@ func main() {
 		}
 
 		parsed := lierc.ParseIRCMessage(line)
-		id := insertMessage(db, client.Id, parsed, "status", false)
+		id := insertMessage(db, client.Id, parsed, "status", false, false)
 
-		event := &LoggedMessage{
+		send_event <- &LoggedMessage{
 			Message:      parsed,
 			ConnectionId: client.Id,
 			MessageId:    id,
 			Self:         false,
 		}
 
-		send_event <- event
 		return nil
 	}))
 
@@ -160,17 +172,15 @@ func main() {
 		var id int
 
 		for _, channel := range multi_message.Channels {
-			id = insertMessage(db, multi_message.Id, multi_message.Message, channel, false)
+			id = insertMessage(db, multi_message.Id, multi_message.Message, channel, false, false)
 		}
 
-		event := &LoggedMessage{
+		send_event <- &LoggedMessage{
 			Message:      multi_message.Message,
 			ConnectionId: multi_message.Id,
 			MessageId:    id,
 			Self:         false,
 		}
-
-		send_event <- event
 
 		return nil
 	}))
@@ -187,13 +197,11 @@ func main() {
 		log_type := logType(client_message.Message.Command)
 
 		if log_type == "pass" {
-			event := &LoggedMessage{
+			send_event <- &LoggedMessage{
 				Message:      client_message.Message,
 				ConnectionId: client_message.Id,
 				Self:         false,
 			}
-
-			send_event <- event
 
 			return nil
 		}
@@ -215,16 +223,23 @@ func main() {
 			channel = log_type
 		}
 
-		id := insertMessage(db, client_message.Id, client_message.Message, channel, false)
+		var highlight = false
 
-		event := &LoggedMessage{
+		if client_message.Message.Command == "PRIVMSG" {
+			if pattern, ok := highlighters.connection[client_message.Id]; ok {
+				highlight = pattern.Match([]byte(client_message.Message.Params[1]))
+			}
+		}
+
+		id := insertMessage(db, client_message.Id, client_message.Message, channel, false, highlight)
+
+		send_event <- &LoggedMessage{
 			MessageId:    id,
 			Message:      client_message.Message,
 			ConnectionId: client_message.Id,
 			Self:         false,
 		}
 
-		send_event <- event
 		return nil
 	}))
 
@@ -251,7 +266,7 @@ func logType(command string) string {
 	return "pass"
 }
 
-func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, self bool) int {
+func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, self bool, highlight bool) int {
 	value, err := json.Marshal(message)
 
 	if err != nil {
@@ -262,13 +277,14 @@ func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, chan
 	privmsg := strings.ToUpper(message.Command) == "PRIVMSG"
 
 	insert_err := db.QueryRow(
-		"INSERT INTO log (connection, channel, privmsg, message, time, self) VALUES($1,$2,$3,$4,to_timestamp($5),$6) RETURNING id",
+		"INSERT INTO log (connection, channel, privmsg, message, time, self, highlight) VALUES($1,$2,$3,$4,to_timestamp($5),$6,$7) RETURNING id",
 		client_id,
 		channel,
 		privmsg,
 		value,
 		message.Time,
 		self,
+		highlight,
 	).Scan(&message_id)
 
 	if insert_err != nil {
@@ -276,4 +292,77 @@ func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, chan
 	}
 
 	return message_id
+}
+
+func updateHighlighters(db *sql.DB) {
+	rows, err := db.Query("SELECT id,config->>'Highlight' FROM connection")
+	defer rows.Close()
+
+	if err != nil {
+		panic(err)
+	}
+
+	highlighters.Lock()
+	defer highlighters.Unlock()
+
+	for rows.Next() {
+		var id string
+		var highlight string
+		rows.Scan(&id, &highlight)
+
+		fmt.Fprintf(os.Stderr, "Building regex for highlights '%s'\n", highlight)
+
+		var terms []string
+
+		err = json.Unmarshal([]byte(highlight), &terms)
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to unmarshall highlights '%s'\n", err.Error)
+			continue
+		}
+
+		for i, term := range terms {
+			terms[i] = "\\Q" + term + "\\E"
+		}
+
+		if len(terms) == 0 {
+			continue
+		}
+
+		var source = "\\b(?:" + strings.Join(terms, "|") + ")\\b"
+		fmt.Fprintf(os.Stderr, "Compiling regex '%s'\n", source)
+
+		re, err := regexp.Compile(source)
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to compile regexp '%s'\n", highlight)
+			continue
+		}
+
+		highlighters.connection[id] = re
+	}
+}
+
+func setupHighlightListener(dsn string, db *sql.DB) {
+	reportProblem := func(ev pq.ListenerEventType, err error) {
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	listener := pq.NewListener(dsn, 10*time.Second, time.Minute, reportProblem)
+	err := listener.Listen("highlights")
+
+	if err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for {
+			fmt.Fprintf(os.Stderr, "Waiting for highlight change notify\n")
+			<-listener.Notify
+			fmt.Fprintf(os.Stderr, "Got highlight change notify\n")
+			updateHighlighters(db)
+		}
+	}()
 }

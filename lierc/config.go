@@ -5,13 +5,14 @@ import (
 )
 
 type IRCConfig struct {
-	Host     string
-	Port     int
-	Ssl      bool
-	Nick     string
-	User     string
-	Pass     string
-	Channels []string
+	Host      string
+	Port      int
+	Ssl       bool
+	Nick      string
+	User      string
+	Pass      string
+	Channels  []string
+	Highlight []string
 }
 
 func (config *IRCConfig) Server() string {

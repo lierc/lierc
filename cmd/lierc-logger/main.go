@@ -29,6 +29,7 @@ type LoggedMessage struct {
 	ConnectionId string
 	MessageId    int
 	Self         bool
+	Highlight    bool
 }
 
 var hostname, _ = os.Hostname()
@@ -121,6 +122,7 @@ func main() {
 			Message:      parsed,
 			ConnectionId: privmsg.Id,
 			Self:         true,
+			Highlight:    false,
 		}
 
 		return nil
@@ -155,6 +157,7 @@ func main() {
 			ConnectionId: client.Id,
 			MessageId:    id,
 			Self:         false,
+			Highlight:    false,
 		}
 
 		return nil
@@ -180,6 +183,7 @@ func main() {
 			ConnectionId: multi_message.Id,
 			MessageId:    id,
 			Self:         false,
+			Highlight:    false,
 		}
 
 		return nil
@@ -201,6 +205,7 @@ func main() {
 				Message:      client_message.Message,
 				ConnectionId: client_message.Id,
 				Self:         false,
+				Highlight:    false,
 			}
 
 			return nil
@@ -226,6 +231,8 @@ func main() {
 		var highlight = false
 
 		if client_message.Message.Command == "PRIVMSG" {
+			highlighters.RLock()
+			defer highlighters.RUnlock()
 			if pattern, ok := highlighters.connection[client_message.Id]; ok {
 				highlight = pattern.Match([]byte(client_message.Message.Params[1]))
 			}
@@ -238,6 +245,7 @@ func main() {
 			Message:      client_message.Message,
 			ConnectionId: client_message.Id,
 			Self:         false,
+			Highlight:    highlight,
 		}
 
 		return nil

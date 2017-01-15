@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"strings"
 	"sync"
+	"time"
 )
 
 type LoggedMessage struct {
@@ -22,14 +24,26 @@ type LoggedMessage struct {
 	Highlight    bool
 }
 
-var client = &http.Client{}
+type Notification struct {
+	Messages []*LoggedMessage
+	Timer    *time.Timer
+	Email    string
+	UserId   string
+}
+
+var (
+	client        = &http.Client{}
+	notifications = make(map[string]*Notification)
+	mu            = &sync.Mutex{}
+	delay         = 2 * time.Minute
+)
 
 func main() {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
-	emails := make(chan *LoggedMessage)
-	go EmailWorker(emails)
+	messages := make(chan *LoggedMessage)
+	go Accumulate(messages)
 
 	nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
 	nsq_config := nsq.NewConfig()
@@ -43,7 +57,7 @@ func main() {
 			panic(err)
 		}
 
-		emails <- &logged
+		messages <- &logged
 		return nil
 	}))
 
@@ -86,7 +100,37 @@ func StreamCount(connection string) int {
 	return 0
 }
 
-func EmailWorker(emails chan *LoggedMessage) {
+func RemoveNotification(user string) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if notification, ok := notifications[user]; ok {
+		notification.Timer.Stop()
+		delete(notifications, user)
+	}
+}
+
+func AddNotification(user string, email string, message *LoggedMessage) {
+	if notification, ok := notifications[user]; ok {
+		notification.Messages = append(notification.Messages, message)
+		notification.Timer.Reset(delay)
+	} else {
+		notification := &Notification{
+			Email:    email,
+			Messages: []*LoggedMessage{message},
+		}
+		notifications[user] = notification
+		notification.Timer = time.AfterFunc(delay, func() {
+			RemoveNotification(user)
+			if StreamCount(user) == 0 {
+				SendNotification(notification)
+			}
+		})
+	}
+
+}
+
+func Accumulate(messages chan *LoggedMessage) {
 	user := os.Getenv("POSTGRES_USER")
 	pass := os.Getenv("POSTGRES_PASSWORD")
 	host := os.Getenv("POSTGRES_HOST")
@@ -95,51 +139,59 @@ func EmailWorker(emails chan *LoggedMessage) {
 	dsn := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=disable", user, pass, dbname, host)
 	db, err := sql.Open("postgres", dsn)
 
-	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
-
 	if err != nil {
 		panic(err)
 	}
 
 	for {
-		logged := <-emails
+		message := <-messages
 
-		var email string
-		var username string
-		var id string
+		var (
+			email string
+			user  string
+		)
 
 		err = db.QueryRow(
-			"SELECT u.username, u.email, u.id FROM connection AS c LEFT JOIN \"user\" AS u ON c.\"user\" = u.id WHERE c.id=$1",
-			logged.ConnectionId,
-		).Scan(&username, &email, &id)
+			"SELECT u.email, u.id FROM connection AS c LEFT JOIN \"user\" AS u ON c.\"user\" = u.id WHERE c.id=$1",
+			message.ConnectionId,
+		).Scan(&email, &user)
 
 		if err != nil {
 			panic(err)
 		}
 
-		if StreamCount(id) > 0 {
-			fmt.Fprintf(os.Stderr, "Skipping because streams are open\n")
+		// Skip if user has any streams open
+		if StreamCount(user) > 0 {
+			RemoveNotification(user)
 			continue
 		}
 
-		from := logged.Message.Prefix.Name
-		channel := logged.Message.Params[0]
-		text := logged.Message.Params[1]
-		trunc := text
+		AddNotification(user, email, message)
+	}
+}
 
-		if len(trunc) > 30 {
-			trunc = text[:30] + "..."
-		}
+func SendNotification(notification *Notification) {
+	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
 
-		msg := []byte(fmt.Sprintf("To: %s\r\n", email) +
-			fmt.Sprintf("Subject: [%s] < %s> %s", channel, from, trunc) +
-			"\r\n" +
-			fmt.Sprintf("< %s> %s", from, text) + "\r\n")
+	var lines []string
 
-		err = smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{email}, msg)
+	for _, message := range notification.Messages {
+		from := message.Message.Prefix.Name
+		channel := message.Message.Params[0]
+		text := message.Message.Params[1]
+		lines = append(lines, fmt.Sprintf("[%s] < %s> %s", channel, from, text))
+	}
 
-		if err != nil {
-			panic(err)
-		}
+	email := notification.Email
+
+	msg := []byte(fmt.Sprintf("To: %s\r\n", email) +
+		fmt.Sprintf("Subject: %s", lines[0]) +
+		"\r\n" +
+		strings.Join(lines, "\n") + "\r\n")
+
+	err := smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{email}, msg)
+
+	if err != nil {
+		panic(err)
 	}
 }

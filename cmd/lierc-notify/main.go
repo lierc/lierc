@@ -28,7 +28,6 @@ type Notification struct {
 	Messages []*LoggedMessage
 	Timer    *time.Timer
 	Email    string
-	UserId   string
 }
 
 var (
@@ -111,22 +110,25 @@ func RemoveNotification(user string) {
 }
 
 func AddNotification(user string, email string, message *LoggedMessage) {
+	notifications.Lock()
+	defer notifications.Unlock()
+
 	if notification, ok := notifications[user]; ok {
 		notification.Messages = append(notification.Messages, message)
 		notification.Timer.Reset(delay)
-	} else {
-		notification := &Notification{
-			Email:    email,
-			Messages: []*LoggedMessage{message},
-		}
-		notifications[user] = notification
-		notification.Timer = time.AfterFunc(delay, func() {
-			RemoveNotification(user)
-			if StreamCount(user) == 0 {
-				SendNotification(notification)
-			}
-		})
+		return
 	}
+
+	notification := &Notification{
+		Email:    email,
+		Messages: []*LoggedMessage{message},
+	}
+	notification.Timer = time.AfterFunc(delay, func() {
+		RemoveNotification(user)
+		if StreamCount(user) == 0 {
+			SendNotification(notification)
+		}
+	})
 
 }
 

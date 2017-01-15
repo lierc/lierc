@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"fmt"
+	"golang.org/x/time/rate"
 	"log"
 	"net"
 	"strings"
@@ -25,6 +26,7 @@ type IRCConn struct {
 	timeout   time.Duration
 	keepalive time.Duration
 	lastmsg   time.Time
+	limiter   *rate.Limiter
 }
 
 func (irc *IRCConn) Connect(server string, ssl bool) error {
@@ -92,12 +94,26 @@ func (irc *IRCConn) Ping() {
 	}
 }
 
+func (irc *IRCConn) CheckRateLimit() bool {
+	rv := irc.limiter.Reserve()
+	if !rv.OK() {
+		return true
+	}
+	delay := rv.Delay()
+	time.Sleep(delay)
+	return false
+}
+
 func (irc *IRCConn) Send() {
 	for {
 		select {
 		case <-irc.end:
 			return
 		case line := <-irc.outgoing:
+			if irc.CheckRateLimit() {
+				return
+			}
+
 			irc.socket.SetWriteDeadline(time.Now().Add(irc.timeout))
 			_, err := irc.socket.Write([]byte(line + "\r\n"))
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/time/rate"
 	"log"
 	"os"
 	"strconv"
@@ -114,6 +115,7 @@ func (client *IRCClient) CreateConn() *IRCConn {
 		connect:   client.connect,
 		id:        client.Id,
 		debug:     client.debug,
+		limiter:   rate.NewLimiter(1, 4),
 	}
 }
 

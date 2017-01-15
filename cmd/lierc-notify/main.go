@@ -156,6 +156,11 @@ func Accumulate(messages chan *LoggedMessage) {
 	for {
 		message := <-messages
 
+		recieved := time.Unix(int64(message.Message.Time), 0)
+		if recieved.Add(5 * time.Minute).Before(time.Now()) {
+			fmt.Fprintf(os.Stderr, "Message is too old, discarding.\n")
+		}
+
 		var (
 			email string
 			user  string

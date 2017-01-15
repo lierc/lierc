@@ -90,6 +90,9 @@ func main() {
 			event := <-send_event
 			json, _ := json.Marshal(event)
 			write.Publish("logged", json)
+			if event.Highlight {
+				write.Publish("highlight", json)
+			}
 		}
 	}()
 

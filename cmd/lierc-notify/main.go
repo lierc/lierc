@@ -76,10 +76,7 @@ func StreamCount(connection string) int {
 		panic(err)
 	}
 
-	os.Stderr.Write(body)
-
 	var counts map[string]int
-
 	json.Unmarshal(body, &counts)
 
 	if count, ok := counts[connection]; ok {

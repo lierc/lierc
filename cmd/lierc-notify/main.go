@@ -29,13 +29,15 @@ type Notification struct {
 	Messages []*LoggedMessage
 	Timer    *time.Timer
 	Email    string
+	User     string
 }
 
 var (
 	client        = &http.Client{}
 	notifications = make(map[string]*Notification)
+	last          = make(map[string]time.Time)
 	mu            = &sync.Mutex{}
-	delay         = 2 * time.Minute
+	delay         = 15 * time.Second
 	limiter       = rate.NewLimiter(1, 5)
 )
 
@@ -126,6 +128,7 @@ func AddNotification(user string, email string, message *LoggedMessage) {
 
 	notification := &Notification{
 		Email:    email,
+		User:     user,
 		Messages: []*LoggedMessage{message},
 	}
 	notifications[user] = notification
@@ -177,19 +180,48 @@ func Accumulate(messages chan *LoggedMessage) {
 	}
 }
 
-func SendNotification(notification *Notification) {
+func UserRateLimit(user string) bool {
+	if ts, ok := last[user]; ok {
+		now := time.Now()
+		if ts.Add(10 * time.Minute).After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+func GlobalRateLimit() bool {
 	rv := limiter.Reserve()
 	if !rv.OK() {
-		panic("Rate limit exceeded")
+		return true
 	}
 	delay := rv.Delay()
 	fmt.Fprintf(os.Stderr, "Delaying email for %s seconds\n", delay)
 	time.Sleep(delay)
+	return false
+}
 
-	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
+func RateLimit(user string) bool {
+	if UserRateLimit(user) {
+		fmt.Fprintf(os.Stderr, "User rate limit hit\n")
+		return true
+	}
+
+	if GlobalRateLimit() {
+		fmt.Fprintf(os.Stderr, "Global rate limit hit\n")
+		return true
+	}
+
+	return false
+}
+
+func SendNotification(notification *Notification) {
+	if RateLimit(notification.User) {
+		fmt.Fprintf(os.Stderr, "Canceling notification\n")
+		return
+	}
 
 	var lines []string
-
 	for _, message := range notification.Messages {
 		from := message.Message.Prefix.Name
 		channel := message.Message.Params[0]
@@ -198,15 +230,17 @@ func SendNotification(notification *Notification) {
 	}
 
 	email := notification.Email
-
 	msg := []byte(fmt.Sprintf("To: %s\r\n", email) +
 		fmt.Sprintf("Subject: %s", lines[0]) +
 		"\r\n" +
 		strings.Join(lines, "\n") + "\r\n")
 
+	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
 	err := smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{email}, msg)
 
 	if err != nil {
 		panic(err)
 	}
+
+	last[notification.User] = time.Now()
 }

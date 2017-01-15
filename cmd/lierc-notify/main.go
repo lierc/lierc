@@ -7,6 +7,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/lierc/lierc/lierc"
 	"github.com/nsqio/go-nsq"
+	"golang.org/x/time/rate"
 	"io/ioutil"
 	"net/http"
 	"net/smtp"
@@ -35,6 +36,7 @@ var (
 	notifications = make(map[string]*Notification)
 	mu            = &sync.Mutex{}
 	delay         = 2 * time.Minute
+	limiter       = rate.NewLimiter(1, 5)
 )
 
 func main() {
@@ -110,14 +112,17 @@ func RemoveNotification(user string) {
 }
 
 func AddNotification(user string, email string, message *LoggedMessage) {
-	notifications.Lock()
-	defer notifications.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 
 	if notification, ok := notifications[user]; ok {
 		notification.Messages = append(notification.Messages, message)
 		notification.Timer.Reset(delay)
+		fmt.Fprintf(os.Stderr, "Accumulating message on %s\n", user)
 		return
 	}
+
+	fmt.Fprintf(os.Stderr, "New message on %s\n", user)
 
 	notification := &Notification{
 		Email:    email,
@@ -173,6 +178,14 @@ func Accumulate(messages chan *LoggedMessage) {
 }
 
 func SendNotification(notification *Notification) {
+	rv := limiter.Reserve()
+	if !rv.OK() {
+		panic("Rate limit exceeded")
+	}
+	delay := rv.Delay()
+	fmt.Fprintf(os.Stderr, "Delaying email for %s seconds\n", delay)
+	time.Sleep(delay)
+
 	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
 
 	var lines []string

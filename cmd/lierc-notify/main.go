@@ -28,6 +28,9 @@ func main() {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
+	emails := make(chan *LoggedMessage)
+	go EmailWorker(emails)
+
 	nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
 	nsq_config := nsq.NewConfig()
 
@@ -46,18 +49,15 @@ func main() {
 
 	notify.ConnectToNSQD(nsqd)
 
-	emails := make(chan *LoggedMessage)
-	go EmailWorker(emails)
-
 	fmt.Print("Ready!\n")
 	wg.Wait()
 }
 
 func StreamCount(connection string) int {
-	api_url := os.Getenv("API_URL")
+	api_stats := os.Getenv("API_STATS")
 	api_key := os.Getenv("API_KEY")
 
-	req, err := http.NewRequest("GET", api_url+"/stats", nil)
+	req, err := http.NewRequest("GET", api_stats, nil)
 
 	if err != nil {
 		panic(err)
@@ -118,14 +118,23 @@ func EmailWorker(emails chan *LoggedMessage) {
 		}
 
 		if StreamCount(id) > 0 {
-			fmt.Fprintf(os.Stderr, "Skipping because streams are open.")
+			fmt.Fprintf(os.Stderr, "Skipping because streams are open\n")
 			continue
 		}
 
-		msg := []byte("To: " + email + "\r\n" +
-			"Subject: relaychat.party notification!\r\n" +
+		from := logged.Message.Prefix.Name
+		channel := logged.Message.Params[0]
+		text := logged.Message.Params[1]
+		trunc := text
+
+		if len(trunc) > 30 {
+			trunc = text[:30] + "..."
+		}
+
+		msg := []byte(fmt.Sprintf("To: %s\r\n", email) +
+			fmt.Sprintf("Subject: [%s] < %s> %s", channel, from, trunc) +
 			"\r\n" +
-			logged.Message.Raw + "\r\n")
+			fmt.Sprintf("< %s> %s", from, text) + "\r\n")
 
 		err = smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{email}, msg)
 

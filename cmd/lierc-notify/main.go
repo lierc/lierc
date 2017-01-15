@@ -123,13 +123,13 @@ func AddNotification(user string, email string, message *LoggedMessage) {
 		Email:    email,
 		Messages: []*LoggedMessage{message},
 	}
+	notifications[user] = notification
 	notification.Timer = time.AfterFunc(delay, func() {
 		RemoveNotification(user)
 		if StreamCount(user) == 0 {
 			SendNotification(notification)
 		}
 	})
-
 }
 
 func Accumulate(messages chan *LoggedMessage) {

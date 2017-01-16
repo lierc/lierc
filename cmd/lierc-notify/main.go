@@ -162,17 +162,30 @@ func Accumulate(messages chan *LoggedMessage) {
 		}
 
 		var (
-			email string
-			user  string
+			email   string
+			user    string
+			enabled string
 		)
 
-		err = db.QueryRow(
-			"SELECT u.email, u.id FROM connection AS c LEFT JOIN \"user\" AS u ON c.\"user\" = u.id WHERE c.id=$1",
-			message.ConnectionId,
-		).Scan(&email, &user)
+		err = db.QueryRow(`
+			SELECT u.email, u.id, p.value
+				FROM connection AS c
+			LEFT JOIN "user" AS u
+				ON c."user" = u.id
+			LEFT JOIN pref AS p
+				ON p."user" = u.id
+				AND p.name = 'email'
+			WHERE c.id=$1
+		  `, message.ConnectionId,
+		).Scan(&email, &user, &enabled)
 
 		if err != nil {
 			panic(err)
+		}
+
+		if enabled == "false" {
+			fmt.Fprintf(os.Stderr, "User has email notifications disabled\n")
+			return
 		}
 
 		// Skip if user has any streams open

@@ -2,7 +2,6 @@ package lierc
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"golang.org/x/time/rate"
 	"log"
@@ -14,7 +13,7 @@ import (
 
 var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
-var Connects = make(chan *IRCClient)
+var Connects = make(chan *IRCClientData)
 
 type IRCClient struct {
 	sync.Mutex
@@ -96,7 +95,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 	}
 
 	client.irc = client.CreateConn()
-	Connects <- client
+	Connects <- client.ClientData()
 
 	go client.Event()
 	go client.irc.Connect(config.Server(), config.Ssl)
@@ -138,7 +137,7 @@ func (client *IRCClient) Destroy() {
 		client.wg.Done()
 	})
 
-	Connects <- client
+	Connects <- client.ClientData()
 
 	client.Send("QUIT bye")
 	client.wg.Wait()
@@ -175,7 +174,7 @@ func (client *IRCClient) Event() {
 			client.ConnectMessage = connect
 			client.Unlock()
 
-			Connects <- client
+			Connects <- client.ClientData()
 			if connect.Connected {
 				client.Register()
 			} else if !client.quitting {
@@ -217,7 +216,7 @@ func (client *IRCClient) Reconnect() {
 		Message:   fmt.Sprintf("Reconnecting in %s", seconds),
 	}
 
-	Connects <- client
+	Connects <- client.ClientData()
 
 	client.timer = time.AfterFunc(seconds, func() {
 		config := client.Config
@@ -334,7 +333,7 @@ type IRCChannelData struct {
 	Mode  string
 }
 
-func (client *IRCClient) MarshalJSON() ([]byte, error) {
+func (client *IRCClient) ClientData() *IRCClientData {
 	channels := make([]*IRCChannelData, 0)
 
 	for _, channel := range client.Channels {
@@ -347,7 +346,7 @@ func (client *IRCClient) MarshalJSON() ([]byte, error) {
 		channels = append(channels, data)
 	}
 
-	return json.Marshal(&IRCClientData{
+	return &IRCClientData{
 		Id:             client.Id,
 		Config:         client.Config,
 		Nick:           client.Nick,
@@ -355,5 +354,5 @@ func (client *IRCClient) MarshalJSON() ([]byte, error) {
 		Registered:     client.Registered,
 		ConnectMessage: client.ConnectMessage,
 		Isupport:       client.Isupport,
-	})
+	}
 }

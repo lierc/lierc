@@ -214,7 +214,7 @@ func (client *IRCClient) Reconnect() {
 
 	client.ConnectMessage = &IRCConnectMessage{
 		Connected: false,
-		Message:   fmt.Sprintf("Reconnecting in %d seconds", seconds),
+		Message:   fmt.Sprintf("Reconnecting in %s", seconds),
 	}
 
 	Connects <- client

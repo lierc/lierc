@@ -340,7 +340,7 @@ func updateHighlighters(db *sql.DB) {
 			continue
 		}
 
-		var source = "\\b(?:" + strings.Join(terms, "|") + ")\\b"
+		var source = "(?i)\\b(?:" + strings.Join(terms, "|") + ")\\b"
 		fmt.Fprintf(os.Stderr, "Compiling regex '%s'\n", source)
 
 		re, err := regexp.Compile(source)

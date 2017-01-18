@@ -133,7 +133,6 @@ func (client *IRCClient) Destroy() {
 
 	timer := time.AfterFunc(2*time.Second, func() {
 		client.irc.Close()
-		close(client.quit)
 		client.wg.Done()
 	})
 
@@ -142,6 +141,7 @@ func (client *IRCClient) Destroy() {
 	client.Send("QUIT bye")
 	client.wg.Wait()
 	timer.Stop()
+	close(client.quit)
 }
 
 func (client *IRCClient) Send(line string) {

@@ -132,6 +132,7 @@ func (irc *IRCConn) Send() {
 
 func (irc *IRCConn) Error(err error) {
 	close(irc.end)
+	irc.Close()
 	irc.connect <- &IRCConnectMessage{
 		Connected: false,
 		Message:   err.Error(),

@@ -175,7 +175,7 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		json, _ := json.Marshal(client)
+		json, _ := json.Marshal(client.ClientData())
 		io.WriteString(w, string(json))
 	}
 }

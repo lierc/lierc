@@ -47,20 +47,41 @@ func main() {
 		nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
 		w, _ := nsq.NewProducer(nsqd, nsq_config)
 
+		type LiercEvent struct {
+			Type string
+			Data interface{}
+		}
+
 		for {
 			select {
 			case event := <-lierc.Events:
-				json, _ := json.Marshal(event)
-				w.Publish("chats", json)
+				e := &LiercEvent{
+					Type: "chats",
+					Data: event,
+				}
+				json, _ := json.Marshal(e)
+				w.Publish("liercd", json)
 			case multi := <-lierc.Multi:
-				json, _ := json.Marshal(multi)
-				w.Publish("multi", json)
+				e := &LiercEvent{
+					Type: "multi",
+					Data: multi,
+				}
+				json, _ := json.Marshal(e)
+				w.Publish("liercd", json)
 			case connect := <-lierc.Connects:
-				json, _ := json.Marshal(connect)
-				w.Publish("connect", json)
+				e := &LiercEvent{
+					Type: "connect",
+					Data: connect,
+				}
+				json, _ := json.Marshal(e)
+				w.Publish("liercd", json)
 			case privmsg := <-liercd.Privmsg:
-				json, _ := json.Marshal(privmsg)
-				w.Publish("privmsg", json)
+				e := &LiercEvent{
+					Type: "privmsg",
+					Data: privmsg,
+				}
+				json, _ := json.Marshal(e)
+				w.Publish("liercd", json)
 			}
 		}
 	}()

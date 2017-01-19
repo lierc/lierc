@@ -15,6 +15,16 @@ import (
 	"time"
 )
 
+type LiercEvent struct {
+	Type string
+	Data interface{}
+}
+
+type ClientPrivmsg struct {
+	Id   string
+	Line string
+}
+
 type Highlighters struct {
 	sync.RWMutex
 	connection map[string]*regexp.Regexp
@@ -60,6 +70,12 @@ var loggable = map[string]string{
 	"376":     "status",
 }
 
+var (
+	send_event     = make(chan *LoggedMessage)
+	send_highlight = make(chan *LoggedMessage)
+	send_connect   = make(chan *lierc.IRCClientData)
+)
+
 func main() {
 
 	wg := &sync.WaitGroup{}
@@ -78,192 +94,74 @@ func main() {
 		panic(err)
 	}
 
-	updateHighlighters(db)
-	setupHighlightListener(dsn, db)
-
-	send_event := make(chan *LoggedMessage)
+	UpdateHighlighters(db)
+	SetupHighlightListener(dsn, db)
 
 	go func() {
 		nsq_config := nsq.NewConfig()
 		write, _ := nsq.NewProducer(nsqd, nsq_config)
 		for {
-			event := <-send_event
-			json, _ := json.Marshal(event)
-			write.Publish("logged", json)
-			if event.Highlight {
+			select {
+			case event := <-send_event:
+				data := &LiercEvent{
+					Type: "logged",
+					Data: event,
+				}
+				json, _ := json.Marshal(data)
+				write.Publish("logged", json)
+			case highlight := <-send_highlight:
+				json, _ := json.Marshal(highlight)
 				write.Publish("highlight", json)
+			case connect := <-send_connect:
+				data := &LiercEvent{
+					Type: "connect",
+					Data: connect,
+				}
+				json, _ := json.Marshal(data)
+				write.Publish("logged", json)
 			}
 		}
 	}()
 
 	nsq_config := nsq.NewConfig()
 
-	priv, _ := nsq.NewConsumer("privmsg", "logger", nsq_config)
-	priv.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
-		privmsg := struct {
-			Id   string
-			Line string
-		}{}
-
-		err := json.Unmarshal(message.Body, &privmsg)
+	liercd, _ := nsq.NewConsumer("liercd", "logger", nsq_config)
+	liercd.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
+		fmt.Printf("%s", string(message.Body))
+		event := &LiercEvent{}
+		err := json.Unmarshal(message.Body, &event)
 
 		if err != nil {
 			panic(err)
 		}
 
-		parsed := lierc.ParseIRCMessage(privmsg.Line)
+		fmt.Printf("%s\n", event.Type)
 
-		// don't log or echo if insufficient params
-		if len(parsed.Params) < 2 {
-			return nil
+		switch event.Type {
+		case "privmsg":
+			data := event.Data.(*ClientPrivmsg)
+			return HandlePrivMsg(data, db)
+		case "connect":
+			data := event.Data.(*lierc.IRCClientData)
+			return HandleConnect(data, db)
+		case "chats":
+			data := event.Data.(*lierc.IRCClientMessage)
+			return HandleChats(data, db)
+		case "multi":
+			data := event.Data.(*lierc.IRCClientMultiMessage)
+			return HandleMulti(data, db)
+		default:
+			panic("Unknown message type")
 		}
-
-		id := insertMessage(db, privmsg.Id, parsed, parsed.Params[0], true, false)
-
-		send_event <- &LoggedMessage{
-			MessageId:    id,
-			Message:      parsed,
-			ConnectionId: privmsg.Id,
-			Self:         true,
-			Highlight:    false,
-		}
-
-		return nil
 	}))
 
-	connects, _ := nsq.NewConsumer("connect", "logger", nsq_config)
-	connects.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
-		client := lierc.IRCClientData{}
-		err := json.Unmarshal(message.Body, &client)
-		if err != nil {
-			panic(err)
-		}
-		var line = ":" + hostname
-
-		if client.ConnectMessage.Connected {
-			line += " CONNECT "
-		} else {
-			line += " DISCONNECT "
-		}
-
-		line += client.Config.Host + " " + strconv.Itoa(client.Config.Port)
-
-		if len(client.ConnectMessage.Message) > 0 {
-			line += " :" + client.ConnectMessage.Message
-		}
-
-		parsed := lierc.ParseIRCMessage(line)
-		id := insertMessage(db, client.Id, parsed, "status", false, false)
-
-		send_event <- &LoggedMessage{
-			Message:      parsed,
-			ConnectionId: client.Id,
-			MessageId:    id,
-			Self:         false,
-			Highlight:    false,
-		}
-
-		return nil
-	}))
-
-	multi, _ := nsq.NewConsumer("multi", "logger", nsq_config)
-	multi.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
-		multi_message := lierc.IRCClientMultiMessage{}
-		err := json.Unmarshal(message.Body, &multi_message)
-
-		if err != nil {
-			panic(err)
-		}
-
-		var id int
-
-		for _, channel := range multi_message.Channels {
-			id = insertMessage(db, multi_message.Id, multi_message.Message, channel, false, false)
-		}
-
-		send_event <- &LoggedMessage{
-			Message:      multi_message.Message,
-			ConnectionId: multi_message.Id,
-			MessageId:    id,
-			Self:         false,
-			Highlight:    false,
-		}
-
-		return nil
-	}))
-
-	chats, _ := nsq.NewConsumer("chats", "logger", nsq_config)
-	chats.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
-		client_message := lierc.IRCClientMessage{}
-		err := json.Unmarshal(message.Body, &client_message)
-
-		if err != nil {
-			panic(err)
-		}
-
-		log_type := logType(client_message.Message.Command)
-
-		if log_type == "pass" {
-			send_event <- &LoggedMessage{
-				Message:      client_message.Message,
-				ConnectionId: client_message.Id,
-				Self:         false,
-				Highlight:    false,
-			}
-
-			return nil
-		}
-
-		if log_type == "skip" {
-			return nil
-		}
-
-		var channel string
-
-		if log_type == "#" {
-			channel = client_message.Message.Params[0]
-			// private message because it is an invalid channel name
-			// log using sender as "channel"
-			if channel[0] != 35 && channel[0] != 38 && channel[0] != 43 && channel[0] != 33 {
-				channel = client_message.Message.Prefix.Name
-			}
-		} else {
-			channel = log_type
-		}
-
-		var highlight = false
-
-		if client_message.Message.Command == "PRIVMSG" {
-			highlighters.RLock()
-			defer highlighters.RUnlock()
-			if pattern, ok := highlighters.connection[client_message.Id]; ok {
-				highlight = pattern.Match([]byte(client_message.Message.Params[1]))
-			}
-		}
-
-		id := insertMessage(db, client_message.Id, client_message.Message, channel, false, highlight)
-
-		send_event <- &LoggedMessage{
-			MessageId:    id,
-			Message:      client_message.Message,
-			ConnectionId: client_message.Id,
-			Self:         false,
-			Highlight:    highlight,
-		}
-
-		return nil
-	}))
-
-	chats.ConnectToNSQD(nsqd)
-	multi.ConnectToNSQD(nsqd)
-	priv.ConnectToNSQD(nsqd)
-	connects.ConnectToNSQD(nsqd)
+	liercd.ConnectToNSQD(nsqd)
 
 	fmt.Print("Ready!\n")
 	wg.Wait()
 }
 
-func logType(command string) string {
+func LogType(command string) string {
 	t, ok := loggable[command]
 
 	if ok {
@@ -277,7 +175,7 @@ func logType(command string) string {
 	return "pass"
 }
 
-func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, self bool, highlight bool) int {
+func InsertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, self bool, highlight bool) int {
 	value, err := json.Marshal(message)
 
 	if err != nil {
@@ -305,7 +203,7 @@ func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, chan
 	return message_id
 }
 
-func updateHighlighters(db *sql.DB) {
+func UpdateHighlighters(db *sql.DB) {
 	rows, err := db.Query("SELECT id,config->>'Highlight' FROM connection")
 	defer rows.Close()
 
@@ -354,7 +252,7 @@ func updateHighlighters(db *sql.DB) {
 	}
 }
 
-func setupHighlightListener(dsn string, db *sql.DB) {
+func SetupHighlightListener(dsn string, db *sql.DB) {
 	reportProblem := func(ev pq.ListenerEventType, err error) {
 		if err != nil {
 			panic(err)
@@ -373,7 +271,133 @@ func setupHighlightListener(dsn string, db *sql.DB) {
 			fmt.Fprintf(os.Stderr, "Waiting for highlight change notify\n")
 			<-listener.Notify
 			fmt.Fprintf(os.Stderr, "Got highlight change notify\n")
-			updateHighlighters(db)
+			UpdateHighlighters(db)
 		}
 	}()
+}
+
+func HandleConnect(client *lierc.IRCClientData, db *sql.DB) error {
+	var line = ":" + hostname
+
+	if client.ConnectMessage.Connected {
+		line += " CONNECT "
+	} else {
+		line += " DISCONNECT "
+	}
+
+	line += client.Config.Host + " " + strconv.Itoa(client.Config.Port)
+
+	if len(client.ConnectMessage.Message) > 0 {
+		line += " :" + client.ConnectMessage.Message
+	}
+
+	parsed := lierc.ParseIRCMessage(line)
+	id := InsertMessage(db, client.Id, parsed, "status", false, false)
+
+	send_connect <- client
+
+	send_event <- &LoggedMessage{
+		Message:      parsed,
+		ConnectionId: client.Id,
+		MessageId:    id,
+		Self:         false,
+		Highlight:    false,
+	}
+
+	return nil
+}
+
+func HandleMulti(multi_message *lierc.IRCClientMultiMessage, db *sql.DB) error {
+	var id int
+
+	for _, channel := range multi_message.Channels {
+		id = InsertMessage(db, multi_message.Id, multi_message.Message, channel, false, false)
+	}
+
+	send_event <- &LoggedMessage{
+		Message:      multi_message.Message,
+		ConnectionId: multi_message.Id,
+		MessageId:    id,
+		Self:         false,
+		Highlight:    false,
+	}
+
+	return nil
+}
+
+func HandlePrivMsg(privmsg *ClientPrivmsg, db *sql.DB) error {
+	parsed := lierc.ParseIRCMessage(privmsg.Line)
+
+	// don't log or echo if insufficient params
+	if len(parsed.Params) < 2 {
+		return nil
+	}
+
+	id := InsertMessage(db, privmsg.Id, parsed, parsed.Params[0], true, false)
+
+	send_event <- &LoggedMessage{
+		MessageId:    id,
+		Message:      parsed,
+		ConnectionId: privmsg.Id,
+		Self:         true,
+		Highlight:    false,
+	}
+
+	return nil
+
+}
+
+func HandleChats(client_message *lierc.IRCClientMessage, db *sql.DB) error {
+	log_type := LogType(client_message.Message.Command)
+
+	if log_type == "pass" {
+		send_event <- &LoggedMessage{
+			Message:      client_message.Message,
+			ConnectionId: client_message.Id,
+			Self:         false,
+			Highlight:    false,
+		}
+
+		return nil
+	}
+
+	if log_type == "skip" {
+		return nil
+	}
+
+	var channel string
+
+	if log_type == "#" {
+		channel = client_message.Message.Params[0]
+		// private message because it is an invalid channel name
+		// log using sender as "channel"
+		if channel[0] != 35 && channel[0] != 38 && channel[0] != 43 && channel[0] != 33 {
+			channel = client_message.Message.Prefix.Name
+		}
+	} else {
+		channel = log_type
+	}
+
+	var highlight = false
+
+	if client_message.Message.Command == "PRIVMSG" {
+		highlighters.RLock()
+		defer highlighters.RUnlock()
+		if pattern, ok := highlighters.connection[client_message.Id]; ok {
+			highlight = pattern.Match([]byte(client_message.Message.Params[1]))
+		}
+	}
+
+	id := InsertMessage(db, client_message.Id, client_message.Message, channel, false, highlight)
+
+	send_event <- &LoggedMessage{
+		MessageId:    id,
+		Message:      client_message.Message,
+		ConnectionId: client_message.Id,
+		Self:         false,
+		Highlight:    highlight,
+	}
+
+	return nil
+
 }

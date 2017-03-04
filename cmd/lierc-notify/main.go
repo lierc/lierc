@@ -136,6 +136,8 @@ func AddNotification(user string, email string, message *LoggedMessage) {
 		RemoveNotification(user)
 		if StreamCount(user) == 0 {
 			SendNotification(notification)
+		} else {
+			fmt.Fprintf(os.Stderr, "Skipping notification due to open streams\n")
 		}
 	})
 }
@@ -180,12 +182,13 @@ func Accumulate(messages chan *LoggedMessage) {
 		).Scan(&email, &user, &enabled)
 
 		if err != nil {
-			panic(err)
+			fmt.Fprintf(os.Stderr, "Error selecting email pref (probably unset): %s\n", err)
+			continue
 		}
 
 		if enabled == "false" {
 			fmt.Fprintf(os.Stderr, "User has email notifications disabled\n")
-			return
+			continue
 		}
 
 		// Skip if user has any streams open

@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -39,6 +40,13 @@ var (
 	mu            = &sync.Mutex{}
 	delay         = 15 * time.Second
 	limiter       = rate.NewLimiter(1, 5)
+	db_user       = os.Getenv("POSTGRES_USER")
+	db_pass       = os.Getenv("POSTGRES_PASSWORD")
+	db_host       = os.Getenv("POSTGRES_HOST")
+	db_name       = os.Getenv("POSTGRES_DB")
+	api_stats     = os.Getenv("API_STATS")
+	api_key       = os.Getenv("API_KEY")
+	api_url       = os.Getenv("API_URL")
 )
 
 func main() {
@@ -71,8 +79,6 @@ func main() {
 }
 
 func StreamCount(connection string) int {
-	api_stats := os.Getenv("API_STATS")
-	api_key := os.Getenv("API_KEY")
 
 	req, err := http.NewRequest("GET", api_stats, nil)
 
@@ -143,12 +149,7 @@ func AddNotification(user string, email string, message *LoggedMessage) {
 }
 
 func Accumulate(messages chan *LoggedMessage) {
-	user := os.Getenv("POSTGRES_USER")
-	pass := os.Getenv("POSTGRES_PASSWORD")
-	host := os.Getenv("POSTGRES_HOST")
-	dbname := os.Getenv("POSTGRES_DB")
-
-	dsn := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=disable", user, pass, dbname, host)
+	dsn := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=disable", db_user, db_pass, db_name, db_host)
 	db, err := sql.Open("postgres", dsn)
 
 	if err != nil {
@@ -242,19 +243,35 @@ func SendNotification(notification *Notification) {
 		return
 	}
 
-	var lines []string
+	var (
+		lines   []string
+		subject string
+	)
+
 	for _, message := range notification.Messages {
 		from := message.Message.Prefix.Name
 		channel := message.Message.Params[0]
 		text := message.Message.Params[1]
-		lines = append(lines, fmt.Sprintf("[%s] < %s> %s", channel, from, text))
+		connection := message.ConnectionId
+
+		line := fmt.Sprintf("    [%s] < %s> %s\n    %s/app/#/%s/%s", channel, from, text, api_url, connection, url.PathEscape(channel))
+		lines = append(lines, line)
+
+		if subject == "" {
+			subject = fmt.Sprintf("[%s] < %s> %s", channel, from, text)
+		}
 	}
 
 	email := notification.Email
 	msg := []byte(fmt.Sprintf("To: %s\r\n", email) +
-		fmt.Sprintf("Subject: %s", lines[0]) +
+		fmt.Sprintf(
+			"From: Relaychat Party <no-reply@relaychat.party>\n"+
+				"Subject: %s\n", subject) +
 		"\r\n" +
-		strings.Join(lines, "\n") + "\r\n")
+		"You were mentioned in the following channels:\n\n" +
+		strings.Join(lines, "\n\n") + "\n\n" +
+		"Please do not reply to this message." +
+		"\r\n")
 
 	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
 	err := smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{email}, msg)

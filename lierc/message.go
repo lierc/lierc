@@ -9,6 +9,7 @@ type IRCPrefix struct {
 	Name   string
 	User   string
 	Server string
+	Sigil  string
 }
 
 type IRCMessage struct {

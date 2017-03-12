@@ -160,6 +160,7 @@ func (client *IRCClient) Event() {
 			if client.debug > 1 {
 				log.Printf("%s <--- %s", client.Id, message.Raw)
 			}
+			client.AddSigil(message)
 			if client.Message(message) {
 				clientmsg := &IRCClientMessage{
 					Id:      client.Id,
@@ -223,6 +224,19 @@ func (client *IRCClient) Reconnect() {
 		client.irc = client.CreateConn()
 		client.irc.Connect(config.Server(), config.Ssl)
 	})
+}
+
+func (client *IRCClient) AddSigil(message *IRCMessage) {
+	client.Lock()
+	defer client.Unlock()
+
+	if message.Command == "PRIVMSG" {
+		if channel, ok := client.Channels[message.Params[0]]; ok {
+			if mode, ok := channel.Nicks[message.Prefix.Name]; ok {
+				message.Prefix.Sigil = client.NickPrefix(mode)
+			}
+		}
+	}
 }
 
 func (client *IRCClient) Message(message *IRCMessage) bool {

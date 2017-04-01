@@ -16,7 +16,7 @@ type IRCConn struct {
 	sync.Mutex
 	incoming  chan *IRCMessage
 	outgoing  chan string
-	connect   chan *IRCConnectMessage
+	status    chan *IRCClientStatus
 	end       chan struct{}
 	reader    *bufio.Reader
 	socket    net.Conn
@@ -50,7 +50,7 @@ func (irc *IRCConn) Connect(server string, ssl bool) error {
 		if irc.debug > 0 {
 			log.Printf("%s connection failed: %v", irc.id, err)
 		}
-		irc.connect <- &IRCConnectMessage{
+		irc.status <- &IRCClientStatus{
 			Connected: false,
 			Message:   err.Error(),
 		}
@@ -64,7 +64,7 @@ func (irc *IRCConn) Connect(server string, ssl bool) error {
 		log.Printf("%s Connected to %s", irc.id, server)
 	}
 
-	irc.connect <- &IRCConnectMessage{
+	irc.status <- &IRCClientStatus{
 		Connected: true,
 		Message:   "Connected",
 	}
@@ -133,7 +133,7 @@ func (irc *IRCConn) Send() {
 func (irc *IRCConn) Error(err error) {
 	close(irc.end)
 	irc.Close()
-	irc.connect <- &IRCConnectMessage{
+	irc.status <- &IRCClientStatus{
 		Connected: false,
 		Message:   err.Error(),
 	}

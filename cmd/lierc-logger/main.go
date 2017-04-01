@@ -9,7 +9,6 @@ import (
 	"github.com/nsqio/go-nsq"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,36 +27,38 @@ type LoggedMessage struct {
 	Message      *lierc.IRCMessage
 	ConnectionId string
 	MessageId    int
-	Self         bool
 	Highlight    bool
 }
 
 var hostname, _ = os.Hostname()
 var loggable = map[string]string{
-	"PRIVMSG": "#",
-	"JOIN":    "#",
-	"PART":    "#",
-	"TOPIC":   "#",
-	"MODE":    "#",
-	"NICK":    "skip",
-	"QUIT":    "skip",
-	"NOTICE":  "status",
-	"001":     "status",
-	"002":     "status",
-	"003":     "status",
-	"004":     "status",
-	"005":     "status",
-	"251":     "status",
-	"252":     "status",
-	"253":     "status",
-	"254":     "status",
-	"255":     "status",
-	"265":     "status",
-	"266":     "status",
-	"250":     "status",
-	"375":     "status",
-	"372":     "status",
-	"376":     "status",
+	"PRIVMSG":    "#",
+	"JOIN":       "#",
+	"PART":       "#",
+	"TOPIC":      "#",
+	"MODE":       "#",
+	"NICK":       "skip",
+	"QUIT":       "skip",
+	"ERROR":      "status",
+	"CONNECT":    "status",
+	"DISCONNECT": "status",
+	"NOTICE":     "status",
+	"001":        "status",
+	"002":        "status",
+	"003":        "status",
+	"004":        "status",
+	"005":        "status",
+	"251":        "status",
+	"252":        "status",
+	"253":        "status",
+	"254":        "status",
+	"255":        "status",
+	"265":        "status",
+	"266":        "status",
+	"250":        "status",
+	"375":        "status",
+	"372":        "status",
+	"376":        "status",
 }
 
 func main() {
@@ -98,74 +99,6 @@ func main() {
 
 	nsq_config := nsq.NewConfig()
 
-	priv, _ := nsq.NewConsumer("privmsg", "logger", nsq_config)
-	priv.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
-		privmsg := struct {
-			Id   string
-			Line string
-		}{}
-
-		err := json.Unmarshal(message.Body, &privmsg)
-
-		if err != nil {
-			panic(err)
-		}
-
-		parsed := lierc.ParseIRCMessage(privmsg.Line)
-
-		// don't log or echo if insufficient params
-		if len(parsed.Params) < 2 {
-			return nil
-		}
-
-		id := insertMessage(db, privmsg.Id, parsed, parsed.Params[0], true, false)
-
-		send_event <- &LoggedMessage{
-			MessageId:    id,
-			Message:      parsed,
-			ConnectionId: privmsg.Id,
-			Self:         true,
-			Highlight:    false,
-		}
-
-		return nil
-	}))
-
-	connects, _ := nsq.NewConsumer("connect", "logger", nsq_config)
-	connects.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
-		client := lierc.IRCClientData{}
-		err := json.Unmarshal(message.Body, &client)
-		if err != nil {
-			panic(err)
-		}
-		var line = ":" + hostname
-
-		if client.ConnectMessage.Connected {
-			line += " CONNECT "
-		} else {
-			line += " DISCONNECT "
-		}
-
-		line += client.Config.Host + " " + strconv.Itoa(client.Config.Port)
-
-		if len(client.ConnectMessage.Message) > 0 {
-			line += " :" + client.ConnectMessage.Message
-		}
-
-		parsed := lierc.ParseIRCMessage(line)
-		id := insertMessage(db, client.Id, parsed, "status", false, false)
-
-		send_event <- &LoggedMessage{
-			Message:      parsed,
-			ConnectionId: client.Id,
-			MessageId:    id,
-			Self:         false,
-			Highlight:    false,
-		}
-
-		return nil
-	}))
-
 	multi, _ := nsq.NewConsumer("multi", "logger", nsq_config)
 	multi.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
 		multi_message := lierc.IRCClientMultiMessage{}
@@ -185,7 +118,6 @@ func main() {
 			Message:      multi_message.Message,
 			ConnectionId: multi_message.Id,
 			MessageId:    id,
-			Self:         false,
 			Highlight:    false,
 		}
 
@@ -207,7 +139,6 @@ func main() {
 			send_event <- &LoggedMessage{
 				Message:      client_message.Message,
 				ConnectionId: client_message.Id,
-				Self:         false,
 				Highlight:    false,
 			}
 
@@ -233,7 +164,7 @@ func main() {
 
 		var highlight = false
 
-		if client_message.Message.Command == "PRIVMSG" {
+		if !client_message.Message.Prefix.Self && client_message.Message.Command == "PRIVMSG" {
 			highlighters.RLock()
 			defer highlighters.RUnlock()
 			if pattern, ok := highlighters.connection[client_message.Id]; ok {
@@ -247,7 +178,6 @@ func main() {
 			MessageId:    id,
 			Message:      client_message.Message,
 			ConnectionId: client_message.Id,
-			Self:         false,
 			Highlight:    highlight,
 		}
 
@@ -256,8 +186,6 @@ func main() {
 
 	chats.ConnectToNSQD(nsqd)
 	multi.ConnectToNSQD(nsqd)
-	priv.ConnectToNSQD(nsqd)
-	connects.ConnectToNSQD(nsqd)
 
 	fmt.Print("Ready!\n")
 	wg.Wait()

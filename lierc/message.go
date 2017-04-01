@@ -9,6 +9,7 @@ type IRCPrefix struct {
 	Name   string
 	User   string
 	Server string
+	Self   bool
 }
 
 type IRCMessage struct {
@@ -25,7 +26,7 @@ func ParseIRCMessage(line string) *IRCMessage {
 
 	message := IRCMessage{
 		Raw:    raw,
-		Prefix: &IRCPrefix{},
+		Prefix: &IRCPrefix{Self: false},
 		Time:   now,
 	}
 

@@ -55,12 +55,10 @@ func main() {
 			case multi := <-lierc.Multi:
 				json, _ := json.Marshal(multi)
 				w.Publish("multi", json)
-			case connect := <-lierc.Connects:
-				json, _ := json.Marshal(connect)
-				w.Publish("connect", json)
-			case privmsg := <-liercd.Privmsg:
-				json, _ := json.Marshal(privmsg)
-				w.Publish("privmsg", json)
+			case client := <-lierc.Status:
+				event := manager.ConnectEvent(client)
+				json, _ := json.Marshal(event)
+				w.Publish("chats", json)
 			}
 		}
 	}()

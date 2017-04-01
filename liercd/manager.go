@@ -3,6 +3,7 @@ package liercd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/lierc/lierc/lierc"
 	"io"
 	"io/ioutil"
@@ -57,6 +58,57 @@ func (manager *ClientManager) RemoveClient(client *lierc.IRCClient) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	delete(manager.Clients, client.Id)
+}
+
+func (manager *ClientManager) ConnectEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf(":%s CONNECT :%s", client.Config.Host, client.Status.Message)
+	message := lierc.ParseIRCMessage(line)
+
+	return &lierc.IRCClientMessage{
+		Id:      client.Id,
+		Message: message,
+	}
+}
+
+func (manager *ClientManager) DisconnectEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf(":%s DISCONNECT :%s", client.Config.Host, client.Status.Message)
+	message := lierc.ParseIRCMessage(line)
+
+	return &lierc.IRCClientMessage{
+		Id:      client.Id,
+		Message: message,
+	}
+}
+
+func (manager *ClientManager) PrivmsgEvent(client *lierc.IRCClient, line string) *lierc.IRCClientMessage {
+	hostname, _ := os.Hostname()
+	prefix := ":" + client.Nick + "!" + client.Config.User + "@" + hostname
+	message := lierc.ParseIRCMessage(prefix + " " + line)
+
+	return &lierc.IRCClientMessage{
+		Id:      client.Id,
+		Message: message,
+	}
+}
+
+func (manager *ClientManager) CreateEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf("CREATE %s %s", client.Nick, client.Config.Host)
+	message := lierc.ParseIRCMessage(line)
+
+	return &lierc.IRCClientMessage{
+		Id:      client.Id,
+		Message: message,
+	}
+}
+
+func (manager *ClientManager) DeleteEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf("DELETE %s", client.Id)
+	message := lierc.ParseIRCMessage(line)
+
+	return &lierc.IRCClientMessage{
+		Id:      client.Id,
+		Message: message,
+	}
 }
 
 func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +175,9 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 		log.Printf("[Manager] adding client %s", client.Id)
 		manager.AddClient(client)
 
+		event := manager.CreateEvent(client)
+		lierc.Events <- event
+
 		io.WriteString(w, "ok")
 
 	case "destroy":
@@ -134,6 +189,8 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 		}
 
 		log.Printf("Destroying client")
+		event := manager.DeleteEvent(client)
+		lierc.Events <- event
 		client.Destroy()
 		manager.RemoveClient(client)
 
@@ -159,12 +216,9 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 		client.Send(line)
 
 		if len(line) >= 7 && strings.ToUpper(line[:7]) == "PRIVMSG" {
-			hostname, _ := os.Hostname()
-			prefix := ":" + client.Nick + "!" + client.Config.User + "@" + hostname
-			Privmsg <- &ClientPrivmsg{
-				Id:   id,
-				Line: prefix + " " + line,
-			}
+			event := manager.PrivmsgEvent(client, line)
+			event.Message.Prefix.Self = true
+			lierc.Events <- event
 		}
 
 	case "status":

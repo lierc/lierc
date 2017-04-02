@@ -2,8 +2,8 @@ package lierc
 
 import (
 	"bufio"
-	"crypto/tls"
 	"fmt"
+	"github.com/spacemonkeygo/openssl"
 	"golang.org/x/time/rate"
 	"log"
 	"net"
@@ -38,10 +38,13 @@ func (c *IRCConn) Connect(server string, ssl bool) error {
 	var err error
 
 	if ssl {
-		conf := &tls.Config{
-			InsecureSkipVerify: true,
+		ctx, err := openssl.NewCtx()
+		if err == nil {
+			err = ctx.LoadVerifyLocations("/etc/ssl/certs/ca-certificates.crt", "")
+			if err == nil {
+				conn, err = openssl.Dial("tcp", server, ctx, 0)
+			}
 		}
-		conn, err = tls.Dial("tcp", server, conf)
 	} else {
 		conn, err = net.Dial("tcp", server)
 	}

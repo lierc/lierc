@@ -1,0 +1,39 @@
+{
+	"ImportPath": "github.com/lierc/lierc",
+	"GoVersion": "go1.8",
+	"GodepVersion": "v79",
+	"Packages": [
+		"./cmd/liercd/"
+	],
+	"Deps": [
+		{
+			"ImportPath": "github.com/golang/snappy",
+			"Rev": "553a641470496b2327abcac10b36396bd98e45c9"
+		},
+		{
+			"ImportPath": "github.com/nsqio/go-nsq",
+			"Comment": "v1.0.6-10-gb9762cd",
+			"Rev": "b9762cdcb6d5cc5ac5287ca076354143d332cc97"
+		},
+		{
+			"ImportPath": "github.com/dequis/openssl",
+			"Rev": "bd6f11e81d9680d1f4f13d8f7b00550a78b4e90a"
+		},
+		{
+			"ImportPath": "github.com/spacemonkeygo/openssl/utils",
+			"Rev": "bd6f11e81d9680d1f4f13d8f7b00550a78b4e90a"
+		},
+		{
+			"ImportPath": "github.com/spacemonkeygo/spacelog",
+			"Rev": "16604ed16156d8634877b208e8acc9279f399777"
+		},
+		{
+			"ImportPath": "golang.org/x/net/context",
+			"Rev": "ffcf1bedda3b04ebb15a168a59800a73d6dc0f4d"
+		},
+		{
+			"ImportPath": "golang.org/x/time/rate",
+			"Rev": "f51c12702a4d776e4c1fa9b0fabab841babae631"
+		}
+	]
+}

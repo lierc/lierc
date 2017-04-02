@@ -3,9 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/lierc/lierc/lierc"
-	"github.com/lierc/lierc/liercd"
+	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/liercd"
 	"github.com/nsqio/go-nsq"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -16,30 +17,45 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-state-from-stdin" {
+		state, err := ioutil.ReadAll(os.Stdin)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Fprintf(os.Stderr, "Read state: %s\n", string(state))
+	}
+
 	quit := make(chan bool)
 	manager := liercd.NewClientManager()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM)
+	signal.Notify(c, syscall.SIGHUP)
 
 	go func() {
-		<-c
-		var wg = &sync.WaitGroup{}
-		var timer = time.AfterFunc(3*time.Second, func() {
-			fmt.Fprintf(os.Stderr, "Failed to gracefully close all connections.")
-			os.Exit(1)
-		})
-		for _, client := range manager.Clients {
-			wg.Add(1)
-			go func() {
-				client.Destroy()
-				wg.Done()
-			}()
+		signal := <-c
+
+		if signal == syscall.SIGTERM {
+			var wg = &sync.WaitGroup{}
+			var timer = time.AfterFunc(3*time.Second, func() {
+				fmt.Fprintf(os.Stderr, "Failed to gracefully close all connections.\n")
+				os.Exit(1)
+			})
+			for _, client := range manager.Clients {
+				wg.Add(1)
+				go func() {
+					client.Destroy()
+					wg.Done()
+				}()
+			}
+			wg.Wait()
+			timer.Stop()
+			fmt.Fprintf(os.Stderr, "Exited cleanly\n")
+			os.Exit(0)
+		} else if signal == syscall.SIGHUP {
+			fmt.Fprintf(os.Stderr, "got HUP\n")
+			manager.Exec()
 		}
-		wg.Wait()
-		timer.Stop()
-		fmt.Fprintf(os.Stderr, "Exited cleanly")
-		os.Exit(0)
 	}()
 
 	go func() {

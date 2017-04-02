@@ -4,18 +4,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lierc/lierc/lierc"
+	"github.com/lierc/lierc/pkg/lierc"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"runtime/pprof"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 var Privmsg = make(chan *ClientPrivmsg)
+
+type ClientWithFd struct {
+	Fd     int
+	Client *lierc.IRCClient
+}
 
 type ClientPrivmsg struct {
 	Id   string
@@ -23,22 +30,21 @@ type ClientPrivmsg struct {
 }
 
 type ClientManager struct {
-	mu      *sync.RWMutex
 	Clients map[string]*lierc.IRCClient
+	sync.RWMutex
 }
 
 func NewClientManager() *ClientManager {
 	manager := &ClientManager{
 		Clients: make(map[string]*lierc.IRCClient),
-		mu:      &sync.RWMutex{},
 	}
 
 	return manager
 }
 
 func (manager *ClientManager) GetClient(uuid string) (*lierc.IRCClient, error) {
-	manager.mu.RLock()
-	defer manager.mu.RUnlock()
+	manager.RLock()
+	defer manager.RUnlock()
 
 	if client, ok := manager.Clients[uuid]; ok {
 		return client, nil
@@ -49,14 +55,14 @@ func (manager *ClientManager) GetClient(uuid string) (*lierc.IRCClient, error) {
 }
 
 func (manager *ClientManager) AddClient(client *lierc.IRCClient) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
+	manager.Lock()
+	defer manager.Unlock()
 	manager.Clients[client.Id] = client
 }
 
 func (manager *ClientManager) RemoveClient(client *lierc.IRCClient) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
+	manager.Lock()
+	defer manager.Unlock()
 	delete(manager.Clients, client.Id)
 }
 
@@ -122,8 +128,8 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 	}
 
 	if r.URL.Path == "/portmap" {
-		manager.mu.RLock()
-		defer manager.mu.RUnlock()
+		manager.RLock()
+		defer manager.RUnlock()
 
 		portmap := make([][]string, 0)
 
@@ -232,4 +238,82 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 		json, _ := json.Marshal(client.ClientData())
 		io.WriteString(w, string(json))
 	}
+}
+
+func (manager *ClientManager) Exec() {
+	ex, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+
+	dir := path.Dir(ex)
+	binary := fmt.Sprintf("%s/liercd-state", dir)
+	fork_args := []string{}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+
+	r2, w2, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+
+	files := []uintptr{r.Fd(), w2.Fd()}
+	sys := &syscall.SysProcAttr{}
+	env := os.Environ()
+
+	fork_attr := &syscall.ProcAttr{
+		Dir:   dir,
+		Env:   env,
+		Files: files,
+		Sys:   sys,
+	}
+
+	_, err = syscall.ForkExec(binary, fork_args, fork_attr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to fork: %s", err)
+		os.Exit(2)
+	}
+
+	manager.Lock()
+	clients := []*ClientWithFd{}
+
+	for _, client := range manager.Clients {
+		client.Lock()
+
+		client_data := &ClientWithFd{
+			Client: client,
+		}
+
+		err, fd := client.Fd()
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s", err)
+		} else if fd != nil {
+			syscall.RawSyscall(
+				syscall.SYS_FCNTL,
+				*fd,
+				syscall.F_SETFD,
+				0,
+			)
+			client_data.Fd = int(*fd)
+		}
+
+		clients = append(clients, client_data)
+	}
+
+	json, err := json.Marshal(clients)
+	if err != nil {
+		panic(err)
+	}
+
+	w.Write(json)
+	w.Close()
+
+	syscall.Dup2(int(r2.Fd()), int(os.Stdin.Fd()))
+	exec_args := []string{ex, "-state-from-stdin"}
+	err = syscall.Exec(ex, exec_args, env)
+	panic(err)
 }

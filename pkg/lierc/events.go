@@ -23,10 +23,10 @@ func init() {
 		for i := 1; i < len(message.Params)-1; i++ {
 			client.Isupport = append(client.Isupport, message.Params[i])
 			if res := prefix.FindStringSubmatch(message.Params[i]); res != nil {
-				client.prefix = make([][]byte, 0)
+				client.Prefix = make([][]byte, 0)
 				for i, _ := range res[1] {
 					if len(res[2]) >= i {
-						client.prefix = append(client.prefix, []byte{res[2][i], res[1][i]})
+						client.Prefix = append(client.Prefix, []byte{res[2][i], res[1][i]})
 					}
 				}
 			}

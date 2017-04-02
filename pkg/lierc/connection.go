@@ -155,6 +155,24 @@ func (irc *IRCConn) PortMap() (error, string, string) {
 	return fmt.Errorf("Not connected"), "", ""
 }
 
+func (irc *IRCConn) Fd() (error, *uintptr) {
+	if irc.socket != nil {
+		tcp_conn, ok := irc.socket.(*net.TCPConn)
+		if !ok {
+			return fmt.Errorf("Not a TCP conn"), nil
+		}
+
+		file, err := tcp_conn.File()
+		if err != nil {
+			return err, nil
+		}
+		defer file.Close()
+		fd := file.Fd()
+		return nil, &fd
+	}
+	return fmt.Errorf("Not connected"), nil
+}
+
 func (irc *IRCConn) Recv() {
 	for {
 		select {

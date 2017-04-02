@@ -89,9 +89,9 @@ static long SSL_CTX_set_tlsext_servername_callback_not_a_macro(
 
 static const SSL_METHOD *OUR_SSLv3_method() {
 #ifndef OPENSSL_NO_SSL3_METHOD
-    return SSLv3_method();
+     return SSLv3_method();
 #else
-    return NULL;
+     return NULL;
 #endif
 }
 

@@ -30,11 +30,11 @@
 		},
 		{
 			"ImportPath": "github.com/spacemonkeygo/openssl",
-			"Rev": "bd6f11e81d9680d1f4f13d8f7b00550a78b4e90a"
+			"Rev": "3a4cc8ec23a509abfe38fbaf3f7fed80d921a8c9"
 		},
 		{
 			"ImportPath": "github.com/spacemonkeygo/openssl/utils",
-			"Rev": "bd6f11e81d9680d1f4f13d8f7b00550a78b4e90a"
+			"Rev": "3a4cc8ec23a509abfe38fbaf3f7fed80d921a8c9"
 		},
 		{
 			"ImportPath": "github.com/spacemonkeygo/spacelog",

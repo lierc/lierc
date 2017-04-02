@@ -15,6 +15,6 @@ type IRCConfig struct {
 	Highlight []string
 }
 
-func (config *IRCConfig) Server() string {
-	return config.Host + ":" + strconv.Itoa(config.Port)
+func (c *IRCConfig) Server() string {
+	return c.Host + ":" + strconv.Itoa(c.Port)
 }

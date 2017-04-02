@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/lierc/lierc/lierc"
-	"github.com/lierc/lierc/liercd"
+	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/liercd"
 	"github.com/nsqio/go-nsq"
 	"log"
 	"net/http"

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/lib/pq"
-	"github.com/lierc/lierc/lierc"
+	"github.com/lierc/lierc/pkg/lierc"
 	"github.com/nsqio/go-nsq"
 	"os"
 	"regexp"

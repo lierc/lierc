@@ -18,22 +18,22 @@ type IRCChannel struct {
 	Synced bool
 }
 
-func (channel *IRCChannel) SetMode(action byte, mode byte) {
+func (c *IRCChannel) SetMode(action byte, mode byte) {
 	switch action {
 	case '+':
-		channel.Mode = AddMode(channel.Mode, mode)
+		c.Mode = AddMode(c.Mode, mode)
 	case '-':
-		channel.Mode = RemoveMode(channel.Mode, mode)
+		c.Mode = RemoveMode(c.Mode, mode)
 	}
 }
 
-func (channel *IRCChannel) SetNickMode(action byte, mode byte, nick string) {
-	if modes, ok := channel.Nicks[nick]; ok {
+func (c *IRCChannel) SetNickMode(action byte, mode byte, nick string) {
+	if modes, ok := c.Nicks[nick]; ok {
 		switch action {
 		case '+':
-			channel.Nicks[nick] = AddMode(modes, mode)
+			c.Nicks[nick] = AddMode(modes, mode)
 		case '-':
-			channel.Nicks[nick] = RemoveMode(modes, mode)
+			c.Nicks[nick] = RemoveMode(modes, mode)
 		}
 	}
 }

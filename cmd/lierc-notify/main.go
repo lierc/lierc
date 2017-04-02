@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	_ "github.com/lib/pq"
-	"github.com/lierc/lierc/lierc"
+	"github.com/lierc/lierc/pkg/lierc"
 	"github.com/nsqio/go-nsq"
 	"golang.org/x/time/rate"
 	"io/ioutil"

@@ -24,7 +24,7 @@ func ParseIRCMessage(line string) *IRCMessage {
 	raw := line
 	now := float64(time.Now().UnixNano()) / float64(time.Second)
 
-	message := IRCMessage{
+	m := IRCMessage{
 		Raw:    raw,
 		Prefix: &IRCPrefix{Self: false},
 		Time:   now,
@@ -33,12 +33,12 @@ func ParseIRCMessage(line string) *IRCMessage {
 	if line[0] == ':' {
 		x := strings.SplitN(line[1:], " ", 2)
 		y := strings.SplitN(x[0], "!", 2)
-		message.Prefix.Name = y[0]
+		m.Prefix.Name = y[0]
 
 		if len(y) == 2 {
 			z := strings.SplitN(y[1], "@", 2)
-			message.Prefix.User = z[0]
-			message.Prefix.Server = z[1]
+			m.Prefix.User = z[0]
+			m.Prefix.Server = z[1]
 		}
 
 		line = x[1]
@@ -48,13 +48,13 @@ func ParseIRCMessage(line string) *IRCMessage {
 		x := strings.SplitN(line, " :", 2)
 		params := strings.Split(strings.TrimSpace(x[0]), " ")
 		params = append(params, x[1])
-		message.Command = params[0]
-		message.Params = params[1:]
+		m.Command = params[0]
+		m.Params = params[1:]
 	} else {
 		x := strings.Split(strings.TrimSpace(line), " ")
-		message.Command = x[0]
-		message.Params = x[1:]
+		m.Command = x[0]
+		m.Params = x[1:]
 	}
 
-	return &message
+	return &m
 }

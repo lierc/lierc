@@ -13,6 +13,7 @@ import (
 	"runtime/pprof"
 	"strings"
 	"sync"
+	"time"
 )
 
 var Privmsg = make(chan *ClientPrivmsg)
@@ -25,6 +26,27 @@ type ClientPrivmsg struct {
 type ClientManager struct {
 	Clients map[string]*lierc.IRCClient
 	sync.RWMutex
+}
+
+func (m *ClientManager) Shutdown() {
+	var wg = &sync.WaitGroup{}
+
+	var timer = time.AfterFunc(3*time.Second, func() {
+		fmt.Fprintf(os.Stderr, "Failed to gracefully close all connections.")
+		os.Exit(1)
+	})
+
+	for _, c := range m.Clients {
+		wg.Add(1)
+		go func() {
+			c.Destroy()
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+	timer.Stop()
+	fmt.Fprintf(os.Stderr, "Exited cleanly")
 }
 
 func NewClientManager() *ClientManager {

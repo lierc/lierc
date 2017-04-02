@@ -16,7 +16,7 @@ var Events = make(chan *IRCClientMessage)
 var Status = make(chan *IRCClient)
 
 type IRCClient struct {
-	sync.Mutex
+	sync.RWMutex
 	Id         string
 	Config     *IRCConfig
 	Channels   map[string]*IRCChannel

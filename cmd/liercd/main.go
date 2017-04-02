@@ -56,7 +56,9 @@ func main() {
 				json, _ := json.Marshal(multi)
 				w.Publish("multi", json)
 			case client := <-lierc.Status:
+				client.RLock()
 				event := manager.ConnectEvent(client)
+				client.RUnlock()
 				json, _ := json.Marshal(event)
 				w.Publish("chats", json)
 			}

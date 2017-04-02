@@ -111,7 +111,7 @@ func main() {
 		var id int
 
 		for _, channel := range multi_message.Channels {
-			id = insertMessage(db, multi_message.Id, multi_message.Message, channel, false, false)
+			id = insertMessage(db, multi_message.Id, multi_message.Message, channel, false)
 		}
 
 		send_event <- &LoggedMessage{
@@ -155,7 +155,7 @@ func main() {
 			channel = client_message.Message.Params[0]
 			// private message because it is an invalid channel name
 			// log using sender as "channel"
-			if channel[0] != 35 && channel[0] != 38 && channel[0] != 43 && channel[0] != 33 {
+			if !client_message.Message.Prefix.Self && channel[0] != 35 && channel[0] != 38 && channel[0] != 43 && channel[0] != 33 {
 				channel = client_message.Message.Prefix.Name
 			}
 		} else {
@@ -172,7 +172,7 @@ func main() {
 			}
 		}
 
-		id := insertMessage(db, client_message.Id, client_message.Message, channel, false, highlight)
+		id := insertMessage(db, client_message.Id, client_message.Message, channel, highlight)
 
 		send_event <- &LoggedMessage{
 			MessageId:    id,
@@ -205,7 +205,7 @@ func logType(command string) string {
 	return "pass"
 }
 
-func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, self bool, highlight bool) int {
+func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, highlight bool) int {
 	value, err := json.Marshal(message)
 
 	if err != nil {
@@ -222,7 +222,7 @@ func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, chan
 		privmsg,
 		value,
 		message.Time,
-		self,
+		message.Prefix.Self,
 		highlight,
 	).Scan(&message_id)
 

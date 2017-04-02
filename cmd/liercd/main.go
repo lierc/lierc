@@ -17,16 +17,16 @@ import (
 )
 
 func main() {
+	quit := make(chan bool)
+	m := liercd.NewClientManager()
+
 	if len(os.Args) > 1 && os.Args[1] == "-state-from-stdin" {
 		state, err := ioutil.ReadAll(os.Stdin)
 		if err != nil {
 			panic(err)
 		}
-		fmt.Fprintf(os.Stderr, "Read state: %s\n", string(state))
+		m.Load(state)
 	}
-
-	quit := make(chan bool)
-	manager := liercd.NewClientManager()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM)
@@ -41,10 +41,10 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Failed to gracefully close all connections.\n")
 				os.Exit(1)
 			})
-			for _, client := range manager.Clients {
+			for _, c := range m.Clients {
 				wg.Add(1)
 				go func() {
-					client.Destroy()
+					c.Destroy()
 					wg.Done()
 				}()
 			}
@@ -54,7 +54,7 @@ func main() {
 			os.Exit(0)
 		} else if signal == syscall.SIGHUP {
 			fmt.Fprintf(os.Stderr, "got HUP\n")
-			manager.Exec()
+			m.Exec()
 		}
 	}()
 
@@ -71,8 +71,8 @@ func main() {
 			case multi := <-lierc.Multi:
 				json, _ := json.Marshal(multi)
 				w.Publish("multi", json)
-			case client := <-lierc.Status:
-				event := manager.ConnectEvent(client)
+			case c := <-lierc.Status:
+				event := m.ConnectEvent(c)
 				json, _ := json.Marshal(event)
 				w.Publish("chats", json)
 			}
@@ -80,7 +80,7 @@ func main() {
 	}()
 
 	go func() {
-		http.HandleFunc("/", manager.HandleCommand)
+		http.HandleFunc("/", m.HandleCommand)
 		log.Print("Listening on port 5005")
 		http.ListenAndServe("0.0.0.0:5005", nil)
 	}()

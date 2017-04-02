@@ -7,6 +7,7 @@ import (
 	"golang.org/x/time/rate"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ type IRCConn struct {
 	end       chan struct{}
 	reader    *bufio.Reader
 	socket    net.Conn
+	tls       *tls.Conn
 	id        string
 	debug     int64
 	pingfreq  time.Duration
@@ -29,73 +31,86 @@ type IRCConn struct {
 	limiter   *rate.Limiter
 }
 
-func (irc *IRCConn) Connect(server string, ssl bool) error {
-	if irc.debug > 0 {
-		log.Printf("%s Connecting to %s", irc.id, server)
+func (c *IRCConn) Resume(conn net.Conn, ssl bool) {
+	c.SetupConn(conn, ssl)
+
+	go c.Send()
+	go c.Recv()
+	go c.Ping()
+}
+
+func (c *IRCConn) Connect(server string, ssl bool) error {
+	if c.debug > 0 {
+		log.Printf("%s Connecting to %s", c.id, server)
 	}
 
-	var c net.Conn
-	var err error
-
-	if ssl {
-		conf := &tls.Config{
-			InsecureSkipVerify: true,
-		}
-		c, err = tls.Dial("tcp", server, conf)
-	} else {
-		c, err = net.Dial("tcp", server)
-	}
+	conn, err := net.Dial("tcp", server)
 
 	if err != nil {
-		if irc.debug > 0 {
-			log.Printf("%s connection failed: %v", irc.id, err)
+		if c.debug > 0 {
+			log.Printf("%s connection failed: %v", c.id, err)
 		}
-		irc.status <- &IRCClientStatus{
+		c.status <- &IRCClientStatus{
 			Connected: false,
 			Message:   err.Error(),
 		}
 		return err
 	}
 
-	irc.socket = c
-	irc.reader = bufio.NewReaderSize(irc.socket, 512)
+	c.SetupConn(conn, ssl)
 
-	if irc.debug > 1 {
-		log.Printf("%s Connected to %s", irc.id, server)
+	if c.debug > 1 {
+		log.Printf("%s Connected to %s", c.id, server)
 	}
 
-	irc.status <- &IRCClientStatus{
+	c.status <- &IRCClientStatus{
 		Connected: true,
 		Message:   "Connected",
 	}
 
-	go irc.Send()
-	go irc.Recv()
-	go irc.Ping()
+	go c.Send()
+	go c.Recv()
+	go c.Ping()
 
 	return nil
 }
 
-func (irc *IRCConn) Ping() {
+func (c *IRCConn) SetupConn(conn net.Conn, ssl bool) {
+	if ssl {
+		conf := &tls.Config{
+			InsecureSkipVerify: true,
+		}
+
+		tls_conn := tls.Client(conn, conf)
+		c.socket = conn
+		c.tls = tls_conn
+		c.reader = bufio.NewReaderSize(c.tls, 512)
+	} else {
+		c.socket = conn
+		c.reader = bufio.NewReaderSize(c.socket, 512)
+	}
+}
+
+func (c *IRCConn) Ping() {
 	keepalive := time.NewTicker(1 * time.Minute)
-	ping := time.NewTicker(irc.pingfreq)
+	ping := time.NewTicker(c.pingfreq)
 
 	for {
 		select {
-		case <-irc.end:
+		case <-c.end:
 			return
 		case <-keepalive.C:
-			if time.Since(irc.lastmsg) >= irc.keepalive {
-				irc.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
+			if time.Since(c.lastmsg) >= c.keepalive {
+				c.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
 			}
 		case <-ping.C:
-			irc.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
+			c.outgoing <- fmt.Sprintf("PING %d", time.Now().UnixNano())
 		}
 	}
 }
 
-func (irc *IRCConn) CheckRateLimit() bool {
-	rv := irc.limiter.Reserve()
+func (c *IRCConn) CheckRateLimit() bool {
+	rv := c.limiter.Reserve()
 	if !rv.OK() {
 		return true
 	}
@@ -104,60 +119,60 @@ func (irc *IRCConn) CheckRateLimit() bool {
 	return false
 }
 
-func (irc *IRCConn) Send() {
+func (c *IRCConn) Send() {
 	for {
 		select {
-		case <-irc.end:
+		case <-c.end:
 			return
-		case line := <-irc.outgoing:
-			if irc.CheckRateLimit() {
+		case line := <-c.outgoing:
+			if c.CheckRateLimit() {
 				return
 			}
 
-			irc.socket.SetWriteDeadline(time.Now().Add(irc.timeout))
-			_, err := irc.socket.Write([]byte(line + "\r\n"))
+			c.socket.SetWriteDeadline(time.Now().Add(c.timeout))
+			_, err := c.socket.Write([]byte(line + "\r\n"))
 
 			var zero time.Time
-			irc.socket.SetWriteDeadline(zero)
+			c.socket.SetWriteDeadline(zero)
 
 			if err != nil {
-				if irc.debug > 0 {
-					log.Printf("%s Error writing %v", irc.id, err)
+				if c.debug > 0 {
+					log.Printf("%s Error writing %v", c.id, err)
 				}
-				irc.Error(err)
+				c.Error(err)
 			}
 		}
 	}
 }
 
-func (irc *IRCConn) Error(err error) {
-	close(irc.end)
-	irc.Close()
-	irc.status <- &IRCClientStatus{
+func (c *IRCConn) Error(err error) {
+	close(c.end)
+	c.Close()
+	c.status <- &IRCClientStatus{
 		Connected: false,
 		Message:   err.Error(),
 	}
 }
 
-func (irc *IRCConn) Close() {
-	if irc.socket != nil {
-		irc.socket.Close()
+func (c *IRCConn) Close() {
+	if c.socket != nil {
+		c.socket.Close()
 	}
 }
 
-func (irc *IRCConn) PortMap() (error, string, string) {
-	if irc.socket != nil {
-		_, local, _ := net.SplitHostPort(irc.socket.LocalAddr().String())
-		_, remote, _ := net.SplitHostPort(irc.socket.RemoteAddr().String())
+func (c *IRCConn) PortMap() (error, string, string) {
+	if c.socket != nil {
+		_, local, _ := net.SplitHostPort(c.socket.LocalAddr().String())
+		_, remote, _ := net.SplitHostPort(c.socket.RemoteAddr().String())
 		return nil, local, remote
 	}
 
 	return fmt.Errorf("Not connected"), "", ""
 }
 
-func (irc *IRCConn) Fd() (error, *uintptr) {
-	if irc.socket != nil {
-		tcp_conn, ok := irc.socket.(*net.TCPConn)
+func (c *IRCConn) ConnFile() (error, *os.File) {
+	if c.socket != nil {
+		tcp_conn, ok := c.socket.(*net.TCPConn)
 		if !ok {
 			return fmt.Errorf("Not a TCP conn"), nil
 		}
@@ -166,42 +181,40 @@ func (irc *IRCConn) Fd() (error, *uintptr) {
 		if err != nil {
 			return err, nil
 		}
-		defer file.Close()
-		fd := file.Fd()
-		return nil, &fd
+		return nil, file
 	}
 	return fmt.Errorf("Not connected"), nil
 }
 
-func (irc *IRCConn) Recv() {
+func (c *IRCConn) Recv() {
 	for {
 		select {
-		case <-irc.end:
+		case <-c.end:
 			return
 		default:
-			if irc.socket != nil {
-				irc.socket.SetReadDeadline(time.Now().Add(irc.timeout + irc.pingfreq))
+			if c.socket != nil {
+				c.socket.SetReadDeadline(time.Now().Add(c.timeout + c.pingfreq))
 			}
 
-			line, err := irc.reader.ReadString('\n')
+			line, err := c.reader.ReadString('\n')
 
-			if irc.socket != nil {
+			if c.socket != nil {
 				var zero time.Time
-				irc.socket.SetReadDeadline(zero)
+				c.socket.SetReadDeadline(zero)
 			}
 
 			if err != nil {
-				if irc.debug > 0 {
-					log.Printf("%s Error reading %v", irc.id, err)
+				if c.debug > 0 {
+					log.Printf("%s Error reading %v", c.id, err)
 				}
-				irc.Error(err)
+				c.Error(err)
 			} else if len(line) > 0 {
 				line = strings.TrimSuffix(line, "\r\n")
 				message := ParseIRCMessage(line)
-				irc.Lock()
-				irc.lastmsg = time.Now()
-				irc.Unlock()
-				irc.incoming <- message
+				c.Lock()
+				c.lastmsg = time.Now()
+				c.Unlock()
+				c.incoming <- message
 			}
 		}
 	}

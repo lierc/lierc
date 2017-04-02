@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -21,6 +22,7 @@ var Privmsg = make(chan *ClientPrivmsg)
 
 type ClientWithFd struct {
 	Fd     int
+	Name   string
 	Client *lierc.IRCClient
 }
 
@@ -35,89 +37,89 @@ type ClientManager struct {
 }
 
 func NewClientManager() *ClientManager {
-	manager := &ClientManager{
+	return &ClientManager{
 		Clients: make(map[string]*lierc.IRCClient),
 	}
-
-	return manager
 }
 
-func (manager *ClientManager) GetClient(uuid string) (*lierc.IRCClient, error) {
-	manager.RLock()
-	defer manager.RUnlock()
+func (m *ClientManager) GetClient(uuid string) (*lierc.IRCClient, error) {
+	m.RLock()
+	defer m.RUnlock()
 
-	if client, ok := manager.Clients[uuid]; ok {
-		return client, nil
+	if c, ok := m.Clients[uuid]; ok {
+		return c, nil
 	}
 
 	log.Printf("[Manager] missing client %s", uuid)
 	return nil, errors.New("Missing client")
 }
 
-func (manager *ClientManager) AddClient(client *lierc.IRCClient) {
-	manager.Lock()
-	defer manager.Unlock()
-	manager.Clients[client.Id] = client
+func (m *ClientManager) AddClient(c *lierc.IRCClient) {
+	m.Lock()
+	defer m.Unlock()
+	log.Printf("[Manager] adding client %s", c.Id)
+	m.Clients[c.Id] = c
 }
 
-func (manager *ClientManager) RemoveClient(client *lierc.IRCClient) {
-	manager.Lock()
-	defer manager.Unlock()
-	delete(manager.Clients, client.Id)
+func (m *ClientManager) RemoveClient(c *lierc.IRCClient) {
+	m.Lock()
+	defer m.Unlock()
+	log.Printf("[Manager] destroyed client %s", c.Id)
+	delete(m.Clients, c.Id)
 }
 
-func (manager *ClientManager) ConnectEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf(":%s CONNECT :%s", client.Config.Host, client.Status.Message)
+func (m *ClientManager) ConnectEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf(":%s CONNECT :%s", c.Config.Host, c.Status.Message)
 	message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
-		Id:      client.Id,
+		Id:      c.Id,
 		Message: message,
 	}
 }
 
-func (manager *ClientManager) DisconnectEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf(":%s DISCONNECT :%s", client.Config.Host, client.Status.Message)
+func (m *ClientManager) DisconnectEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf(":%s DISCONNECT :%s", c.Config.Host, c.Status.Message)
 	message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
-		Id:      client.Id,
+		Id:      c.Id,
 		Message: message,
 	}
 }
 
-func (manager *ClientManager) PrivmsgEvent(client *lierc.IRCClient, line string) *lierc.IRCClientMessage {
+func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
 	hostname, _ := os.Hostname()
-	prefix := ":" + client.Nick + "!" + client.Config.User + "@" + hostname
+	prefix := ":" + c.Nick + "!" + c.Config.User + "@" + hostname
 	message := lierc.ParseIRCMessage(prefix + " " + line)
 
 	return &lierc.IRCClientMessage{
-		Id:      client.Id,
+		Id:      c.Id,
 		Message: message,
 	}
 }
 
-func (manager *ClientManager) CreateEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf("CREATE %s %s", client.Nick, client.Config.Host)
+func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf("CREATE %s %s", c.Nick, c.Config.Host)
 	message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
-		Id:      client.Id,
+		Id:      c.Id,
 		Message: message,
 	}
 }
 
-func (manager *ClientManager) DeleteEvent(client *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf("DELETE %s", client.Id)
+func (m *ClientManager) DeleteEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
+	var line = fmt.Sprintf("DELETE %s", c.Id)
 	message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
-		Id:      client.Id,
+		Id:      c.Id,
 		Message: message,
 	}
 }
 
-func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
+func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 	log.Print("[HTTP] " + r.Method + " " + r.URL.Path)
 	parts := strings.SplitN(r.URL.Path, "/", 3)
 
@@ -128,17 +130,17 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 	}
 
 	if r.URL.Path == "/portmap" {
-		manager.RLock()
-		defer manager.RUnlock()
+		m.RLock()
+		defer m.RUnlock()
 
 		portmap := make([][]string, 0)
 
-		for _, client := range manager.Clients {
-			err, local, remote := client.PortMap()
+		for _, c := range m.Clients {
+			err, local, remote := c.PortMap()
 			if err == nil {
-				user := client.Config.User
+				user := c.Config.User
 				if user == "" {
-					user = client.Config.Nick
+					user = c.Config.Nick
 				}
 				portmap = append(portmap, []string{user, local, remote})
 			}
@@ -169,25 +171,24 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		exists, _ := manager.GetClient(id)
+		exists, _ := m.GetClient(id)
 		if exists != nil {
 			log.Printf("[Manager] adding client failed, %s", exists.Id)
 			http.Error(w, "nok", http.StatusBadRequest)
 			return
 		}
 
-		client := lierc.NewIRCClient(&config, id)
+		c := lierc.NewIRCClient(&config, id)
 
-		log.Printf("[Manager] adding client %s", client.Id)
-		manager.AddClient(client)
+		m.AddClient(c)
 
-		event := manager.CreateEvent(client)
+		event := m.CreateEvent(c)
 		lierc.Events <- event
 
 		io.WriteString(w, "ok")
 
 	case "destroy":
-		client, err := manager.GetClient(id)
+		c, err := m.GetClient(id)
 
 		if err != nil {
 			http.Error(w, "nok", http.StatusNotFound)
@@ -195,16 +196,15 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 		}
 
 		log.Printf("Destroying client")
-		event := manager.DeleteEvent(client)
+		event := m.DeleteEvent(c)
 		lierc.Events <- event
-		client.Destroy()
-		manager.RemoveClient(client)
+		c.Destroy()
+		m.RemoveClient(c)
 
-		log.Printf("[Manager] destroyed client %s", id)
 		io.WriteString(w, "ok")
 
 	case "raw":
-		client, err := manager.GetClient(id)
+		c, err := m.GetClient(id)
 
 		if err != nil {
 			http.Error(w, "nok", http.StatusNotFound)
@@ -219,28 +219,51 @@ func (manager *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Reque
 		}
 
 		line := string(raw)
-		client.Send(line)
+		c.Send(line)
 
 		if len(line) >= 7 && strings.ToUpper(line[:7]) == "PRIVMSG" {
-			event := manager.PrivmsgEvent(client, line)
+			event := m.PrivmsgEvent(c, line)
 			event.Message.Prefix.Self = true
 			lierc.Events <- event
 		}
 
 	case "status":
-		client, err := manager.GetClient(id)
+		c, err := m.GetClient(id)
 
 		if err != nil {
 			http.Error(w, "nok", http.StatusNotFound)
 			return
 		}
 
-		json, _ := json.Marshal(client.ClientData())
+		json, _ := json.Marshal(c.ClientData())
 		io.WriteString(w, string(json))
 	}
 }
 
-func (manager *ClientManager) Exec() {
+func (m *ClientManager) Load(state []byte) {
+	clients := []*ClientWithFd{}
+	err := json.Unmarshal(state, &clients)
+
+	if err != nil {
+		panic(err)
+	}
+
+	for _, c := range clients {
+		c.Client.Init()
+		m.AddClient(c.Client)
+
+		if c.Fd != -1 {
+			file := os.NewFile(uintptr(c.Fd), c.Name)
+			conn, err := net.FileConn(file)
+			if err != nil {
+				panic(err)
+			}
+			c.Client.Resume(conn)
+		}
+	}
+}
+
+func (m *ClientManager) Exec() {
 	ex, err := os.Executable()
 	if err != nil {
 		panic(err)
@@ -277,28 +300,31 @@ func (manager *ClientManager) Exec() {
 		os.Exit(2)
 	}
 
-	manager.Lock()
+	m.Lock()
 	clients := []*ClientWithFd{}
 
-	for _, client := range manager.Clients {
-		client.Lock()
+	for _, c := range m.Clients {
+		c.Lock()
 
 		client_data := &ClientWithFd{
-			Client: client,
+			Client: c,
 		}
 
-		err, fd := client.Fd()
+		err, file := c.ConnFile()
+		defer file.Close()
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s", err)
-		} else if fd != nil {
+			client_data.Fd = -1
+		} else {
 			syscall.RawSyscall(
 				syscall.SYS_FCNTL,
-				*fd,
+				file.Fd(),
 				syscall.F_SETFD,
 				0,
 			)
-			client_data.Fd = int(*fd)
+			client_data.Fd = int(file.Fd())
+			client_data.Name = file.Name()
 		}
 
 		clients = append(clients, client_data)

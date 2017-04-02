@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"golang.org/x/time/rate"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"sync"
@@ -66,10 +67,7 @@ func LogLevel(env string) int64 {
 }
 
 func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
-	status := make(chan *IRCClientStatus)
-	incoming := make(chan *IRCMessage)
-
-	client := &IRCClient{
+	c := &IRCClient{
 		Config:     config,
 		Registered: false,
 		Isupport:   make([]string, 0),
@@ -88,210 +86,219 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 			[]byte{'%', 'h'},
 		},
 		Chantypes: []byte{'#', '&'},
-		status:    status,
-		incoming:  incoming,
-		quit:      make(chan struct{}),
 	}
 
-	client.irc = client.CreateConn()
-	Status <- client
+	c.Init()
+	Status <- c
 
-	go client.Event()
-	go client.irc.Connect(config.Server(), config.Ssl)
+	go c.irc.Connect(config.Server(), config.Ssl)
 
-	return client
+	return c
 }
 
-func (client *IRCClient) CreateConn() *IRCConn {
+func (c *IRCClient) Init() {
+	c.status = make(chan *IRCClientStatus)
+	c.incoming = make(chan *IRCMessage)
+	c.quit = make(chan struct{})
+
+	c.irc = c.CreateConn()
+	go c.Event()
+}
+
+func (c *IRCClient) Resume(conn net.Conn) {
+	go c.irc.Resume(conn, c.Config.Ssl)
+}
+
+func (c *IRCClient) CreateConn() *IRCConn {
 	return &IRCConn{
-		incoming:  client.incoming,
+		incoming:  c.incoming,
 		outgoing:  make(chan string),
 		end:       make(chan struct{}),
 		pingfreq:  15 * time.Minute,
 		keepalive: 4 * time.Minute,
 		timeout:   1 * time.Minute,
-		status:    client.status,
-		id:        client.Id,
-		debug:     client.Debug,
+		status:    c.status,
+		id:        c.Id,
+		debug:     c.Debug,
 		limiter:   rate.NewLimiter(1, 4),
 	}
 }
 
-func (client *IRCClient) Destroy() {
-	client.Lock()
-	client.Quitting = true
-	client.wg = &sync.WaitGroup{}
-	client.Status.Message = "Closing connection"
-	client.Unlock()
+func (c *IRCClient) Destroy() {
+	c.Lock()
+	c.Quitting = true
+	c.wg = &sync.WaitGroup{}
+	c.Status.Message = "Closing connection"
+	c.Unlock()
 
-	client.wg.Add(1)
+	c.wg.Add(1)
 
-	if client.timer != nil {
-		client.timer.Stop()
+	if c.timer != nil {
+		c.timer.Stop()
 	}
 
 	timer := time.AfterFunc(2*time.Second, func() {
-		client.irc.Close()
-		client.wg.Done()
+		c.irc.Close()
+		c.wg.Done()
 	})
 
-	Status <- client
+	Status <- c
 
-	client.Send("QUIT bye")
-	client.wg.Wait()
+	c.Send("QUIT bye")
+	c.wg.Wait()
 	timer.Stop()
-	close(client.quit)
+	close(c.quit)
 }
 
-func (client *IRCClient) Send(line string) {
-	if client.Debug > 1 {
-		log.Printf("%s ---> %s", client.Id, line)
+func (c *IRCClient) Send(line string) {
+	if c.Debug > 1 {
+		log.Printf("%s ---> %s", c.Id, line)
 	}
-	if client.Status.Connected {
-		client.irc.outgoing <- line
+	if c.Status.Connected {
+		c.irc.outgoing <- line
 	}
 }
 
-func (client *IRCClient) Event() {
+func (c *IRCClient) Event() {
 	for {
 		select {
-		case message := <-client.incoming:
-			if client.Debug > 1 {
-				log.Printf("%s <--- %s", client.Id, message.Raw)
+		case message := <-c.incoming:
+			if c.Debug > 1 {
+				log.Printf("%s <--- %s", c.Id, message.Raw)
 			}
-			if client.Message(message) {
+			if c.Message(message) {
 				clientmsg := &IRCClientMessage{
-					Id:      client.Id,
+					Id:      c.Id,
 					Message: message,
 				}
 				Events <- clientmsg
 			}
-		case status := <-client.status:
-			client.Lock()
-			client.Status = status
-			client.Unlock()
+		case status := <-c.status:
+			c.Lock()
+			c.Status = status
+			c.Unlock()
 
-			Status <- client
+			Status <- c
 			if status.Connected {
-				client.Register()
-			} else if !client.Quitting {
-				client.Reconnect()
+				c.Register()
+			} else if !c.Quitting {
+				c.Reconnect()
 			} else {
-				client.wg.Done()
+				c.wg.Done()
 			}
-		case <-client.quit:
+		case <-c.quit:
 			return
 		}
 	}
 }
 
-func (client *IRCClient) PortMap() (error, string, string) {
-	if client.irc != nil {
-		return client.irc.PortMap()
+func (c *IRCClient) PortMap() (error, string, string) {
+	if c.irc != nil {
+		return c.irc.PortMap()
 	}
 	return fmt.Errorf("Not connected"), "", ""
 }
 
-func (client *IRCClient) Fd() (error, *uintptr) {
-	return client.irc.Fd()
+func (c *IRCClient) ConnFile() (error, *os.File) {
+	return c.irc.ConnFile()
 }
 
-func (client *IRCClient) Reconnect() {
-	client.Lock()
-	defer client.Unlock()
+func (c *IRCClient) Reconnect() {
+	c.Lock()
+	defer c.Unlock()
 
-	client.Registered = false
-	client.Isupport = make([]string, 0)
-	client.Retries = client.Retries + 1
-	delay := 15 * client.Retries
+	c.Registered = false
+	c.Isupport = make([]string, 0)
+	c.Retries = c.Retries + 1
+	delay := 15 * c.Retries
 	if delay > 300 {
 		delay = 300
 	}
 	seconds := time.Duration(delay) * time.Second
-	if client.Debug > 0 {
-		log.Printf("%s Reconnecting in %s", client.Id, seconds)
+	if c.Debug > 0 {
+		log.Printf("%s Reconnecting in %s", c.Id, seconds)
 	}
 
-	client.Status = &IRCClientStatus{
+	c.Status = &IRCClientStatus{
 		Connected: false,
 		Message:   fmt.Sprintf("Reconnecting in %s", seconds),
 	}
 
-	Status <- client
+	Status <- c
 
-	client.timer = time.AfterFunc(seconds, func() {
-		config := client.Config
-		client.irc = client.CreateConn()
-		client.irc.Connect(config.Server(), config.Ssl)
+	c.timer = time.AfterFunc(seconds, func() {
+		config := c.Config
+		c.irc = c.CreateConn()
+		c.irc.Connect(config.Server(), config.Ssl)
 	})
 }
 
-func (client *IRCClient) Message(message *IRCMessage) bool {
-	client.Lock()
-	defer client.Unlock()
+func (c *IRCClient) Message(message *IRCMessage) bool {
+	c.Lock()
+	defer c.Unlock()
 
 	if handler, ok := handlers[message.Command]; ok {
-		handler(client, message)
+		handler(c, message)
 	}
 
 	return true
 }
 
-func (client *IRCClient) NickCollision(message *IRCMessage) {
-	if !client.Registered {
-		client.Nick = client.Nick + "_"
-		client.Send(fmt.Sprintf("NICK %s", client.Nick))
+func (c *IRCClient) NickCollision(message *IRCMessage) {
+	if !c.Registered {
+		c.Nick = c.Nick + "_"
+		c.Send(fmt.Sprintf("NICK %s", c.Nick))
 	}
 }
 
-func (client *IRCClient) Join() {
-	for _, channel := range client.Config.Channels {
+func (c *IRCClient) Join() {
+	for _, channel := range c.Config.Channels {
 		if channel != "" {
-			client.Send(fmt.Sprintf("JOIN %s", channel))
+			c.Send(fmt.Sprintf("JOIN %s", channel))
 		}
 	}
 }
 
-func (client *IRCClient) Welcome() {
-	if !client.Registered {
-		client.Retries = 0
-		client.Registered = true
-		client.Join()
+func (c *IRCClient) Welcome() {
+	if !c.Registered {
+		c.Retries = 0
+		c.Registered = true
+		c.Join()
 	}
 }
 
-func (client *IRCClient) Register() {
-	if client.Config.Pass != "" {
-		client.Send(fmt.Sprintf("PASS %s", client.Config.Pass))
+func (c *IRCClient) Register() {
+	if c.Config.Pass != "" {
+		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
 	}
 
-	user := client.Config.User
+	user := c.Config.User
 	if user == "" {
-		user = client.Config.Nick
+		user = c.Config.Nick
 	}
 
 	hostname, _ := os.Hostname()
-	client.Send(fmt.Sprintf(
+	c.Send(fmt.Sprintf(
 		"USER %s %s %s %s",
 		user,
 		hostname,
-		client.Config.Host,
+		c.Config.Host,
 		user,
 	))
 
-	client.Send(fmt.Sprintf("NICK %s", client.Config.Nick))
+	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
 }
 
-func (client *IRCClient) Nicks(channel *IRCChannel) []string {
+func (c *IRCClient) Nicks(channel *IRCChannel) []string {
 	names := make([]string, 0)
 	for nick, mode := range channel.Nicks {
-		names = append(names, client.NickPrefix(mode)+nick)
+		names = append(names, c.NickPrefix(mode)+nick)
 	}
 	return names
 }
 
-func (client *IRCClient) NickPrefix(mode []byte) string {
-	for _, mapping := range client.Prefix {
+func (c *IRCClient) NickPrefix(mode []byte) string {
+	for _, mapping := range c.Prefix {
 		if bytes.IndexByte(mode, mapping[1]) != -1 {
 			return string(mapping[0])
 		}
@@ -299,8 +306,8 @@ func (client *IRCClient) NickPrefix(mode []byte) string {
 	return ""
 }
 
-func (client *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
-	for _, mapping := range client.Prefix {
+func (c *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
+	for _, mapping := range c.Prefix {
 		if prefix == mapping[0] {
 			return mapping[1], true
 		}
@@ -308,8 +315,8 @@ func (client *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
 	return 0, false
 }
 
-func (client *IRCClient) IsNickMode(mode byte) bool {
-	for _, mapping := range client.Prefix {
+func (c *IRCClient) IsNickMode(mode byte) bool {
+	for _, mapping := range c.Prefix {
 		if mode == mapping[1] {
 			return true
 		}
@@ -334,13 +341,13 @@ type IRCChannelData struct {
 	Mode  string
 }
 
-func (client *IRCClient) ClientData() *IRCClientData {
+func (c *IRCClient) ClientData() *IRCClientData {
 	channels := make([]*IRCChannelData, 0)
 
-	for _, channel := range client.Channels {
+	for _, channel := range c.Channels {
 		data := &IRCChannelData{
 			Name:  channel.Name,
-			Nicks: client.Nicks(channel),
+			Nicks: c.Nicks(channel),
 			Topic: channel.Topic,
 			Mode:  "+" + string(channel.Mode),
 		}
@@ -348,12 +355,12 @@ func (client *IRCClient) ClientData() *IRCClientData {
 	}
 
 	return &IRCClientData{
-		Id:         client.Id,
-		Config:     client.Config,
-		Nick:       client.Nick,
+		Id:         c.Id,
+		Config:     c.Config,
+		Nick:       c.Nick,
 		Channels:   channels,
-		Registered: client.Registered,
-		Status:     client.Status,
-		Isupport:   client.Isupport,
+		Registered: c.Registered,
+		Status:     c.Status,
+		Isupport:   c.Isupport,
 	}
 }

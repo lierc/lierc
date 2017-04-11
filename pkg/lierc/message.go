@@ -1,6 +1,7 @@
 package lierc
 
 import (
+	"errors"
 	"strings"
 	"time"
 )
@@ -20,7 +21,11 @@ type IRCMessage struct {
 	Params  []string
 }
 
-func ParseIRCMessage(line string) *IRCMessage {
+func ParseIRCMessage(line string) (error, *IRCMessage) {
+	if len(line) == 0 {
+		return errors.New("Zero length message"), nil
+	}
+
 	raw := line
 	now := float64(time.Now().UnixNano()) / float64(time.Second)
 
@@ -52,9 +57,15 @@ func ParseIRCMessage(line string) *IRCMessage {
 		m.Params = params[1:]
 	} else {
 		x := strings.Split(strings.TrimSpace(line), " ")
-		m.Command = x[0]
-		m.Params = x[1:]
+		if len(x) > 0 {
+			m.Command = x[0]
+			if len(x) > 1 {
+				m.Params = x[1:]
+			}
+		} else {
+			return errors.New("Message has no command"), nil
+		}
 	}
 
-	return &m
+	return nil, &m
 }

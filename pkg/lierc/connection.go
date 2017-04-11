@@ -177,13 +177,18 @@ func (c *IRCConn) Recv() {
 					log.Printf("%s Error reading %v", c.id, err)
 				}
 				c.Error(err)
-			} else if len(line) > 0 {
+			} else {
 				line = strings.TrimSuffix(line, "\r\n")
-				m := ParseIRCMessage(line)
-				c.Lock()
-				c.lastmsg = time.Now()
-				c.Unlock()
-				c.incoming <- m
+				err, m := ParseIRCMessage(line)
+
+				if err != nil {
+					log.Printf("%s Error parsing message %v", c.id, err)
+				} else {
+					c.Lock()
+					c.lastmsg = time.Now()
+					c.Unlock()
+					c.incoming <- m
+				}
 			}
 		}
 	}

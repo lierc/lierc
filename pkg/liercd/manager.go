@@ -83,7 +83,7 @@ func (m *ClientManager) RemoveClient(c *lierc.IRCClient) {
 
 func (m *ClientManager) ConnectEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
 	var line = fmt.Sprintf(":%s CONNECT :%s", c.Config.Host, c.Status.Message)
-	message := lierc.ParseIRCMessage(line)
+	_, message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,
@@ -93,7 +93,7 @@ func (m *ClientManager) ConnectEvent(c *lierc.IRCClient) *lierc.IRCClientMessage
 
 func (m *ClientManager) DisconnectEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
 	var line = fmt.Sprintf(":%s DISCONNECT :%s", c.Config.Host, c.Status.Message)
-	message := lierc.ParseIRCMessage(line)
+	_, message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,
@@ -104,7 +104,7 @@ func (m *ClientManager) DisconnectEvent(c *lierc.IRCClient) *lierc.IRCClientMess
 func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
 	hostname, _ := os.Hostname()
 	prefix := ":" + c.Nick + "!" + c.Config.User + "@" + hostname
-	message := lierc.ParseIRCMessage(prefix + " " + line)
+	_, message := lierc.ParseIRCMessage(prefix + " " + line)
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,
@@ -114,7 +114,7 @@ func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRC
 
 func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
 	var line = fmt.Sprintf("CREATE %s %s", c.Nick, c.Config.Host)
-	message := lierc.ParseIRCMessage(line)
+	_, message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,
@@ -124,7 +124,7 @@ func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage 
 
 func (m *ClientManager) DeleteEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
 	var line = fmt.Sprintf("DELETE %s", c.Id)
-	message := lierc.ParseIRCMessage(line)
+	_, message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,

@@ -214,6 +214,7 @@ func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, chan
 
 	var message_id int
 	privmsg := strings.ToUpper(message.Command) == "PRIVMSG"
+	channel = strings.ToLower(channel)
 
 	insert_err := db.QueryRow(
 		"INSERT INTO log (connection, channel, privmsg, message, time, self, highlight) VALUES($1,$2,$3,$4,to_timestamp($5),$6,$7) RETURNING id",

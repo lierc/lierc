@@ -278,7 +278,7 @@ func (c *IRCClient) Register() {
 	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
 }
 
-func (c *IRCClient) Nicks(channel *IRCChannel) []string {
+func (c *IRCClient) NicksWithPrefix(channel *IRCChannel) []string {
 	names := make([]string, 0)
 	for nick, mode := range channel.Nicks {
 		names = append(names, c.NickPrefix(mode)+nick)
@@ -336,7 +336,7 @@ func (c *IRCClient) ClientData() *IRCClientData {
 	for _, channel := range c.Channels {
 		data := &IRCChannelData{
 			Name:  channel.Name,
-			Nicks: c.Nicks(channel),
+			Nicks: c.NicksWithPrefix(channel),
 			Topic: channel.Topic,
 			Mode:  "+" + string(channel.Mode),
 		}

@@ -50,7 +50,8 @@ func init() {
 	}
 
 	handlers["353"] = func(c *IRCClient, m *IRCMessage) {
-		if channel, ok := c.Channels[m.Params[2]]; ok {
+		name := strings.ToLower(m.Params[2])
+		if channel, ok := c.Channels[name]; ok {
 			if channel.Synced {
 				channel.Synced = false
 				channel.Nicks = make(map[string][]byte, 0)
@@ -70,13 +71,14 @@ func init() {
 	}
 
 	handlers["366"] = func(c *IRCClient, m *IRCMessage) {
-		if channel, ok := c.Channels[m.Params[1]]; ok {
+		name := strings.ToLower(m.Params[1])
+		if channel, ok := c.Channels[name]; ok {
 			channel.Synced = true
 		}
 	}
 
 	handlers["MODE"] = func(c *IRCClient, m *IRCMessage) {
-		name := m.Params[0]
+		name := strings.ToLower(m.Params[0])
 		if m.Prefix.Name == name {
 			// global user mode hmm
 		} else if channel, ok := c.Channels[name]; ok {
@@ -94,16 +96,16 @@ func init() {
 	}
 
 	handlers["JOIN"] = func(c *IRCClient, m *IRCMessage) {
-		name := m.Params[0]
+		name := strings.ToLower(m.Params[0])
 		nick := m.Prefix.Name
 		if nick == c.Nick {
 			c.Channels[name] = &IRCChannel{
 				Topic:  &IRCTopic{},
-				Name:   name,
+				Name:   m.Params[0], // preserve case
 				Nicks:  make(map[string][]byte),
 				Synced: false,
 			}
-			c.Send(fmt.Sprintf("MODE %s", name))
+			c.Send(fmt.Sprintf("MODE %s", m.Params[0]))
 		}
 		if channel, ok := c.Channels[name]; ok {
 			channel.Nicks[nick] = []byte{}
@@ -111,7 +113,7 @@ func init() {
 	}
 
 	handlers["KICK"] = func(c *IRCClient, m *IRCMessage) {
-		name := m.Params[0]
+		name := strings.ToLower(m.Params[0])
 		nick := m.Prefix.Name
 		if nick == c.Nick {
 			delete(c.Channels, name)
@@ -121,7 +123,7 @@ func init() {
 	}
 
 	handlers["PART"] = func(c *IRCClient, m *IRCMessage) {
-		name := m.Params[0]
+		name := strings.ToLower(m.Params[0])
 		nick := m.Prefix.Name
 		if nick == c.Nick {
 			delete(c.Channels, name)
@@ -133,10 +135,10 @@ func init() {
 	handlers["QUIT"] = func(c *IRCClient, m *IRCMessage) {
 		channels := []string{}
 		nick := m.Prefix.Name
-		for name, channel := range c.Channels {
+		for _, channel := range c.Channels {
 			if _, ok := channel.Nicks[nick]; ok {
 				delete(channel.Nicks, nick)
-				channels = append(channels, name)
+				channels = append(channels, channel.Name)
 			}
 		}
 		Multi <- &IRCClientMultiMessage{
@@ -148,7 +150,7 @@ func init() {
 
 	handlers["TOPIC"] = func(c *IRCClient, m *IRCMessage) {
 		nick := m.Prefix.Name
-		name := m.Params[0]
+		name := strings.ToLower(m.Params[0])
 		topic := m.Params[1]
 		if channel, ok := c.Channels[name]; ok {
 			channel.Topic.Topic = topic
@@ -158,7 +160,7 @@ func init() {
 	}
 
 	handlers["332"] = func(c *IRCClient, m *IRCMessage) {
-		name := m.Params[1]
+		name := strings.ToLower(m.Params[1])
 		topic := m.Params[2]
 		if channel, ok := c.Channels[name]; ok {
 			channel.Topic.Topic = topic
@@ -166,13 +168,15 @@ func init() {
 	}
 
 	handlers["324"] = func(c *IRCClient, m *IRCMessage) {
-		if channel, ok := c.Channels[m.Params[1]]; ok {
+		name := strings.ToLower(m.Params[1])
+		if channel, ok := c.Channels[name]; ok {
 			channel.Mode = []byte(m.Params[2][1:])
 		}
 	}
 
 	handlers["333"] = func(c *IRCClient, m *IRCMessage) {
-		if channel, ok := c.Channels[m.Params[1]]; ok {
+		name := strings.ToLower(m.Params[1])
+		if channel, ok := c.Channels[name]; ok {
 			time, _ := strconv.ParseInt(m.Params[3], 10, 64)
 			channel.Topic.Time = time
 			channel.Topic.User = m.Params[2]
@@ -197,11 +201,11 @@ func init() {
 		if nick == c.Nick {
 			c.Nick = new_nick
 		}
-		for name, channel := range c.Channels {
+		for _, channel := range c.Channels {
 			if _, ok := channel.Nicks[nick]; ok {
 				channel.Nicks[new_nick] = channel.Nicks[nick]
 				delete(channel.Nicks, nick)
-				channels = append(channels, name)
+				channels = append(channels, channel.Name)
 			}
 		}
 		Multi <- &IRCClientMultiMessage{

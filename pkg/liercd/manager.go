@@ -113,7 +113,7 @@ func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRC
 }
 
 func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf("CREATE %s %s", c.Nick, c.Config.Host)
+	var line = fmt.Sprintf("CREATE %s :%s", c.Nick, c.Config.Display())
 	_, message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{

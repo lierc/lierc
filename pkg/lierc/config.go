@@ -11,8 +11,17 @@ type IRCConfig struct {
 	Nick      string
 	User      string
 	Pass      string
+	Alias     string
 	Channels  []string
 	Highlight []string
+}
+
+func (c *IRCConfig) Display() string {
+	if c.Alias != "" {
+		return c.Alias
+	} else {
+		return c.Host
+	}
 }
 
 func (c *IRCConfig) Server() string {

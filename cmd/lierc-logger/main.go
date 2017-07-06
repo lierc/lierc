@@ -153,15 +153,20 @@ func main() {
 
 		if log_type == "#" {
 			channel = client_message.Message.Params[0]
+
 			// private message because it is an invalid channel name
 			// log using sender as "channel"
-			if !client_message.Message.Prefix.Self && channel[0] != 35 && channel[0] != 38 && channel[0] != 43 && channel[0] != 33 {
-				channel = client_message.Message.Prefix.Name
-				err := insertPrivate(db, client_message.Id, client_message.Message)
+			if !isChannel(channel[0]) {
+				if !client_message.Message.Prefix.Self {
+					channel = client_message.Message.Prefix.Name
+				}
+
+				err := insertPrivate(db, client_message.Id, channel, client_message.Message.Time)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error logging privmsg: %v", err)
 				}
 			}
+
 		} else {
 			channel = log_type
 		}
@@ -209,13 +214,13 @@ func logType(command string) string {
 	return "pass"
 }
 
-func insertPrivate(db *sql.DB, client_id string, message *lierc.IRCMessage) error {
+func insertPrivate(db *sql.DB, client_id string, nick string, time float64) error {
 	_, err := db.Exec(
 		"INSERT INTO private (connection, nick, time) VALUES($1,$2,to_timestamp($3)) ON CONFLICT (connection, nick) DO UPDATE SET time=to_timestamp($4)",
 		client_id,
-		message.Prefix.Name,
-		message.Time,
-		message.Time,
+		nick,
+		time,
+		time,
 	)
 	return err
 }
@@ -296,6 +301,10 @@ func updateHighlighters(db *sql.DB) {
 
 		highlighters.connection[id] = re
 	}
+}
+
+func isChannel(channel byte) bool {
+	return channel == 35 || channel == 38 || channel == 43 || channel == 33
 }
 
 func setupHighlightListener(dsn string, db *sql.DB) {

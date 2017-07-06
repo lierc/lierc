@@ -157,6 +157,10 @@ func main() {
 			// log using sender as "channel"
 			if !client_message.Message.Prefix.Self && channel[0] != 35 && channel[0] != 38 && channel[0] != 43 && channel[0] != 33 {
 				channel = client_message.Message.Prefix.Name
+				err := insertPrivate(db, client_message.Id, channel)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error logging privmsg: %v", err)
+				}
 			}
 		} else {
 			channel = log_type
@@ -203,6 +207,15 @@ func logType(command string) string {
 	}
 
 	return "pass"
+}
+
+func insertPrivate(db *sql.DB, client_id string, nick string) error {
+	_, err := db.Exec(
+		"INSERT INTO private (connection, nick) VALUES($1,$2) ON CONFLICT DO NOTHING",
+		client_id,
+		nick,
+	)
+	return err
 }
 
 func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, highlight bool) int {

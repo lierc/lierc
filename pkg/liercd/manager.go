@@ -236,7 +236,7 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		line := string(raw)
 		c.Send(line)
 
-		if len(line) >= 7 && strings.ToUpper(line[:7]) == "PRIVMSG" {
+		if len(line) >= 0 && (strings.ToUpper(line[:7]) == "PRIVMSG" || strings.toUpper(line[:6]) == "NOTICE") {
 			event := m.PrivmsgEvent(c, line)
 			event.Message.Prefix.Self = true
 			lierc.Events <- event

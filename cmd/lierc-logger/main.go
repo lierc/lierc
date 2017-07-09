@@ -42,7 +42,7 @@ var loggable = map[string]string{
 	"ERROR":      "status",
 	"CONNECT":    "status",
 	"DISCONNECT": "status",
-	"NOTICE":     "status",
+	"NOTICE":     "#",
 	"001":        "status",
 	"002":        "status",
 	"003":        "status",

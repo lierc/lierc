@@ -3,10 +3,7 @@
 	"GoVersion": "go1.8",
 	"GodepVersion": "v79",
 	"Packages": [
-		"./cmd/liercd",
-		"./cmd/lierc-identd",
-		"./cmd/lierc-logger",
-		"./cmd/lierc-notify"
+		"./cmd/..."
 	],
 	"Deps": [
 		{
@@ -15,26 +12,26 @@
 		},
 		{
 			"ImportPath": "github.com/lib/pq",
-			"Comment": "go1.0-cutoff-166-g2704adc",
-			"Rev": "2704adc878c21e1329f46f6e56a1c387d788ff94"
+			"Comment": "go1.0-cutoff-173-gdd1fe20",
+			"Rev": "dd1fe2071026ce53f36a39112e645b4d4f5793a4"
 		},
 		{
 			"ImportPath": "github.com/lib/pq/oid",
-			"Comment": "go1.0-cutoff-166-g2704adc",
-			"Rev": "2704adc878c21e1329f46f6e56a1c387d788ff94"
+			"Comment": "go1.0-cutoff-173-gdd1fe20",
+			"Rev": "dd1fe2071026ce53f36a39112e645b4d4f5793a4"
 		},
 		{
 			"ImportPath": "github.com/nsqio/go-nsq",
-			"Comment": "v1.0.6-10-gb9762cd",
-			"Rev": "b9762cdcb6d5cc5ac5287ca076354143d332cc97"
+			"Comment": "v1.0.6-19-g973bf9a",
+			"Rev": "973bf9a2952ff7e38071ae8392b73e4418503059"
 		},
 		{
 			"ImportPath": "golang.org/x/net/context",
-			"Rev": "ffcf1bedda3b04ebb15a168a59800a73d6dc0f4d"
+			"Rev": "f2499483f923065a842d38eb4c7f1927e6fc6e6d"
 		},
 		{
 			"ImportPath": "golang.org/x/time/rate",
-			"Rev": "f51c12702a4d776e4c1fa9b0fabab841babae631"
+			"Rev": "8be79e1e0910c292df4e79c241bb7e8f7e725959"
 		}
 	]
 }

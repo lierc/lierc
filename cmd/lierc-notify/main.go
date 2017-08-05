@@ -36,8 +36,8 @@ type GCMNotificationConfig struct {
 }
 
 type GCMNotification struct {
-	To   string            `json:"to"`
-	Data map[string]string `json:"data"`
+	To   string           `json:"to"`
+	Data []*LoggedMessage `json:"data"`
 }
 
 type NotificationPref struct {
@@ -298,24 +298,6 @@ func NotifyGCM(notification *Notification) {
 	parts := strings.Split(notification.Pref.GCM.Endpoint, "/")
 	id := parts[len(parts)-1]
 
-	data := map[string]string{
-		"from":    notification.Messages[0].Message.Prefix.Name,
-		"channel": notification.Messages[0].Message.Params[0],
-		"text":    notification.Messages[0].Message.Params[1],
-	}
-
-	payload := &GCMNotification{
-		To:   id,
-		Data: data,
-	}
-
-	var buf bytes.Buffer
-	err := json.NewEncoder(&buf).Encode(&payload)
-
-	if err != nil {
-		panic(err)
-	}
-
 	key, err := base64.StdEncoding.DecodeString(
 		notification.Pref.GCM.Key)
 
@@ -334,6 +316,18 @@ func NotifyGCM(notification *Notification) {
 		notification.Pref.GCM.Endpoint,
 		key,
 		auth,
+	}
+
+	payload := &GCMNotification{
+		To:   id,
+		Data: notification.Messages,
+	}
+
+	var buf bytes.Buffer
+	err = json.NewEncoder(&buf).Encode(&payload)
+
+	if err != nil {
+		panic(err)
 	}
 
 	webpush.Send(nil, sub, buf.String(), gcm_key)

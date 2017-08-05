@@ -281,15 +281,20 @@ func updateHighlighters(db *sql.DB) {
 			continue
 		}
 
-		for i, term := range terms {
-			terms[i] = "\\Q" + term + "\\E"
+		var parts []string
+
+		for _, term := range terms {
+			matched, _ := regexp.MatchString("\\S", term)
+			if matched {
+				parts = append(parts, "\\Q"+term+"\\E")
+			}
 		}
 
-		if len(terms) == 0 {
+		if len(parts) == 0 {
 			continue
 		}
 
-		var source = "(?i)\\b(?:" + strings.Join(terms, "|") + ")\\b"
+		var source = "(?i)\\b(?:" + strings.Join(parts, "|") + ")\\b"
 		fmt.Fprintf(os.Stderr, "Compiling regex '%s'\n", source)
 
 		re, err := regexp.Compile(source)

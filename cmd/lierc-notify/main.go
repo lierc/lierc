@@ -53,36 +53,69 @@ type Notification struct {
 	Pref     *NotificationPref
 }
 
-var (
-	client        = &http.Client{}
-	notifications = make(map[string]*Notification)
-	last          = make(map[string]time.Time)
-	mu            = &sync.Mutex{}
-	delay         = 15 * time.Second
-	limiter       = rate.NewLimiter(1, 5)
-	db_user       = os.Getenv("POSTGRES_USER")
-	db_pass       = os.Getenv("POSTGRES_PASSWORD")
-	db_host       = os.Getenv("POSTGRES_HOST")
-	db_name       = os.Getenv("POSTGRES_DB")
-	api_stats     = os.Getenv("API_STATS")
-	api_key       = os.Getenv("API_KEY")
-	api_url       = os.Getenv("API_URL")
-	gcm_key       = os.Getenv("GCM_KEY")
-	vapid_priv    = os.Getenv("VAPID_PRIVATE")
-)
+type Notifier struct {
+	Client        *http.Client
+	Notifications map[string]*Notification
+	Last          map[string]time.Time
+	Mu            *sync.Mutex
+	Limiter       *rate.Limiter
+	Config        *NotifierConfig
+	Queue         chan *LoggedMessage
+}
+
+type NotifierConfig struct {
+	DBUser          string
+	DBPass          string
+	DBHost          string
+	DBName          string
+	APIStats        string
+	APIKey          string
+	APIURL          string
+	VAPIDPrivateKey string
+	NSQDHost        string
+	Delay           time.Duration
+}
 
 func main() {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
-	c := make(chan *LoggedMessage)
-	go Accumulate(c)
+	conf := &NotifierConfig{
+		DBUser:          os.Getenv("POSTGRES_USER"),
+		DBPass:          os.Getenv("POSTGRES_PASSWORD"),
+		DBHost:          os.Getenv("POSTGRES_HOST"),
+		DBName:          os.Getenv("POSTGRES_DB"),
+		APIStats:        os.Getenv("API_STATS"),
+		APIKey:          os.Getenv("API_KEY"),
+		APIURL:          os.Getenv("API_URL"),
+		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE"),
+		NSQDHost:        os.Getenv("NSQD_HOST"),
+		Delay:           15 * time.Second,
+	}
 
-	nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
+	notifier := &Notifier{
+		Client:        &http.Client{},
+		Notifications: make(map[string]*Notification),
+		Last:          make(map[string]time.Time),
+		Mu:            &sync.Mutex{},
+		Limiter:       rate.NewLimiter(1, 5),
+		Config:        conf,
+		Queue:         make(chan *LoggedMessage),
+	}
+
+	go notifier.Accumulate()
+	notifier.ListenNSQ()
+
+	fmt.Print("Ready!\n")
+	wg.Wait()
+}
+
+func (n *Notifier) ListenNSQ() {
+	nsqd := fmt.Sprintf("%s:4150", n.Config.NSQDHost)
 	nsq_config := nsq.NewConfig()
 
-	notify, _ := nsq.NewConsumer("highlight", "notifier", nsq_config)
-	notify.AddHandler(nsq.HandlerFunc(func(m *nsq.Message) error {
+	topic, _ := nsq.NewConsumer("highlight", "notifier", nsq_config)
+	topic.AddHandler(nsq.HandlerFunc(func(m *nsq.Message) error {
 		var logged LoggedMessage
 		err := json.Unmarshal(m.Body, &logged)
 
@@ -90,26 +123,23 @@ func main() {
 			panic(err)
 		}
 
-		c <- &logged
+		n.Queue <- &logged
 		return nil
 	}))
 
-	notify.ConnectToNSQD(nsqd)
-
-	fmt.Print("Ready!\n")
-	wg.Wait()
+	topic.ConnectToNSQD(nsqd)
 }
 
-func StreamCount(connection string) int {
+func (n *Notifier) StreamCount(connection string) int {
 
-	req, err := http.NewRequest("GET", api_stats, nil)
+	req, err := http.NewRequest("GET", n.Config.APIStats, nil)
 
 	if err != nil {
 		panic(err)
 	}
 
-	req.Header.Set("Lierc-Key", api_key)
-	res, err := client.Do(req)
+	req.Header.Set("Lierc-Key", n.Config.APIKey)
+	res, err := n.Client.Do(req)
 
 	if err != nil {
 		panic(err)
@@ -131,57 +161,67 @@ func StreamCount(connection string) int {
 	return 0
 }
 
-func RemoveNotification(user string) {
-	mu.Lock()
-	defer mu.Unlock()
+func (n *Notifier) RemoveNotification(user string) {
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
 
-	if notification, ok := notifications[user]; ok {
-		notification.Timer.Stop()
-		delete(notifications, user)
+	if o, ok := n.Notifications[user]; ok {
+		o.Timer.Stop()
+		delete(n.Notifications, user)
 	}
 }
 
-func AddNotification(u string, p *NotificationPref, m *LoggedMessage) {
-	mu.Lock()
-	defer mu.Unlock()
+func (n *Notifier) AddNotification(u string, p *NotificationPref, m *LoggedMessage) {
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
 
-	if n, ok := notifications[u]; ok {
-		n.Messages = append(n.Messages, m)
-		n.Timer.Reset(delay)
+	if o, ok := n.Notifications[u]; ok {
+		o.Messages = append(o.Messages, m)
+		o.Timer.Reset(n.Config.Delay)
 		fmt.Fprintf(os.Stderr, "Accumulating message on %s\n", u)
 		return
 	}
 
 	fmt.Fprintf(os.Stderr, "New message on %s\n", u)
 
-	n := &Notification{
+	o := &Notification{
 		Pref:     p,
 		User:     u,
 		Messages: []*LoggedMessage{m},
 	}
 
-	notifications[u] = n
+	n.Notifications[u] = o
 
-	n.Timer = time.AfterFunc(delay, func() {
-		RemoveNotification(u)
-		if StreamCount(u) == 0 {
-			n.Send()
+	o.Timer = time.AfterFunc(n.Config.Delay, func() {
+		n.RemoveNotification(u)
+		if n.StreamCount(u) == 0 {
+			n.Send(o)
 		} else {
 			fmt.Fprintf(os.Stderr, "Skipping notification due to open streams\n")
 		}
 	})
 }
 
-func Accumulate(c chan *LoggedMessage) {
-	dsn := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=disable", db_user, db_pass, db_name, db_host)
+func (n *Notifier) DB() *sql.DB {
+	dsn := fmt.Sprintf(
+		"user=%s password=%s dbname=%s host=%s sslmode=disable",
+		n.Config.DBUser, n.Config.DBPass, n.Config.DBName, n.Config.DBHost,
+	)
+
 	db, err := sql.Open("postgres", dsn)
 
 	if err != nil {
 		panic(err)
 	}
 
+	return db
+}
+
+func (n *Notifier) Accumulate() {
+	db := n.DB()
+
 	for {
-		m := <-c
+		m := <-n.Queue
 
 		recieved := time.Unix(int64(m.Message.Time), 0)
 		if recieved.Add(5 * time.Minute).Before(time.Now()) {
@@ -195,7 +235,7 @@ func Accumulate(c chan *LoggedMessage) {
 			emailAddress string
 		)
 
-		err = db.QueryRow(`
+		err := db.QueryRow(`
 			SELECT u.email, u.id, p.value
 				FROM connection AS c
 			JOIN "user" AS u
@@ -244,8 +284,8 @@ func Accumulate(c chan *LoggedMessage) {
 		}
 
 		// Skip if user has any streams open
-		if StreamCount(user) > 0 {
-			RemoveNotification(user)
+		if n.StreamCount(user) > 0 {
+			n.RemoveNotification(user)
 			continue
 		}
 
@@ -255,12 +295,12 @@ func Accumulate(c chan *LoggedMessage) {
 			EmailAddress:   emailAddress,
 		}
 
-		AddNotification(user, p, m)
+		n.AddNotification(user, p, m)
 	}
 }
 
-func UserRateLimit(user string) bool {
-	if ts, ok := last[user]; ok {
+func (n *Notifier) UserRateLimit(user string) bool {
+	if ts, ok := n.Last[user]; ok {
 		now := time.Now()
 		if ts.Add(10 * time.Minute).After(now) {
 			return true
@@ -269,8 +309,8 @@ func UserRateLimit(user string) bool {
 	return false
 }
 
-func GlobalRateLimit() bool {
-	rv := limiter.Reserve()
+func (n *Notifier) GlobalRateLimit() bool {
+	rv := n.Limiter.Reserve()
 	if !rv.OK() {
 		return true
 	}
@@ -280,13 +320,13 @@ func GlobalRateLimit() bool {
 	return false
 }
 
-func RateLimit(user string) bool {
-	if UserRateLimit(user) {
+func (n *Notifier) RateLimit(user string) bool {
+	if n.UserRateLimit(user) {
 		fmt.Fprintf(os.Stderr, "User rate limit hit\n")
 		return true
 	}
 
-	if GlobalRateLimit() {
+	if n.GlobalRateLimit() {
 		fmt.Fprintf(os.Stderr, "Global rate limit hit\n")
 		return true
 	}
@@ -294,24 +334,27 @@ func RateLimit(user string) bool {
 	return false
 }
 
-func (n *Notification) Send() {
-	if RateLimit(n.User) {
+func (n *Notifier) Send(o *Notification) {
+	if n.RateLimit(o.User) {
 		fmt.Fprintf(os.Stderr, "Canceling notification\n")
 		return
 	}
 
-	if n.Pref.EmailEnabled {
-		SendEmail(n.Messages, n.Pref.EmailAddress)
+	if o.Pref.EmailEnabled {
+		n.SendEmail(o.Messages, o.Pref.EmailAddress)
 	}
 
-	for _, c := range n.Pref.WebPushConfigs {
-		SendWebPush(n.Messages, c)
+	for _, c := range o.Pref.WebPushConfigs {
+		n.SendWebPush(o.Messages, c)
 	}
 
-	last[n.User] = time.Now()
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
+
+	n.Last[o.User] = time.Now()
 }
 
-func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
+func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 	parts := strings.Split(c.Endpoint, "/")
 	id := parts[len(parts)-1]
 
@@ -340,9 +383,9 @@ func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 	fmt.Fprintf(os.Stderr, "sending webpush '%s'\n", c.Endpoint)
 
 	res, err := webpush.SendNotification(buf.Bytes(), sub, &webpush.Options{
-		Subscriber:      api_url,
+		Subscriber:      n.Config.APIURL,
 		TTL:             10,
-		VAPIDPrivateKey: vapid_priv,
+		VAPIDPrivateKey: n.Config.VAPIDPrivateKey,
 	})
 
 	if err != nil {
@@ -359,7 +402,7 @@ func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 	fmt.Fprintf(os.Stderr, "%s\n", body)
 }
 
-func SendEmail(ms []*LoggedMessage, emailAddress string) {
+func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 	var (
 		lines   []string
 		subject string
@@ -371,7 +414,7 @@ func SendEmail(ms []*LoggedMessage, emailAddress string) {
 		text := m.Message.Params[1]
 		connection := m.ConnectionId
 
-		line := fmt.Sprintf("    [%s] < %s> %s\n    %s/app/#/%s/%s", channel, from, text, api_url, connection, url.PathEscape(channel))
+		line := fmt.Sprintf("    [%s] < %s> %s\n    %s/app/#/%s/%s", channel, from, text, n.Config.APIURL, connection, url.PathEscape(channel))
 		lines = append(lines, line)
 
 		if subject == "" {

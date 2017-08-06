@@ -28,6 +28,7 @@ type LoggedMessage struct {
 	ConnectionId string
 	MessageId    int
 	Highlight    bool
+	Direct       bool
 }
 
 var hostname, _ = os.Hostname()
@@ -91,7 +92,7 @@ func main() {
 			event := <-send_event
 			json, _ := json.Marshal(event)
 			write.Publish("logged", json)
-			if event.Highlight {
+			if event.Highlight || event.Direct {
 				write.Publish("highlight", json)
 			}
 		}
@@ -149,7 +150,10 @@ func main() {
 			return nil
 		}
 
-		var channel string
+		var (
+			channel string
+			direct  bool
+		)
 
 		if log_type == "#" {
 			channel = client_message.Message.Params[0]
@@ -165,6 +169,7 @@ func main() {
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error logging privmsg: %v", err)
 				}
+				direct = true
 			}
 
 		} else {
@@ -188,6 +193,7 @@ func main() {
 			Message:      client_message.Message,
 			ConnectionId: client_message.Id,
 			Highlight:    highlight,
+			Direct:       direct,
 		}
 
 		return nil

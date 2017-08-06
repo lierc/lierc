@@ -26,6 +26,7 @@ type LoggedMessage struct {
 	MessageId    int
 	Self         bool
 	Highlight    bool
+	Direct       bool
 }
 
 type WebPushConfig struct {

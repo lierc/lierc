@@ -29,22 +29,21 @@ type LoggedMessage struct {
 	Highlight    bool
 }
 
-type GCMNotificationConfig struct {
+type WebPushConfig struct {
 	Endpoint string `json:"endpoint"`
 	Key      string `json:"key"`
 	Auth     string `json:"auth"`
 }
 
-type GCMNotification struct {
+type WebPush struct {
 	To   string           `json:"to"`
 	Data []*LoggedMessage `json:"data"`
 }
 
 type NotificationPref struct {
-	EmailEnabled bool
-	GCMEnabled   bool
-	Email        string
-	GCM          *GCMNotificationConfig
+	EmailEnabled   bool
+	EmailAddress   string
+	WebPushConfigs []*WebPushConfig
 }
 
 type Notification struct {
@@ -75,22 +74,22 @@ func main() {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
-	messages := make(chan *LoggedMessage)
-	go Accumulate(messages)
+	c := make(chan *LoggedMessage)
+	go Accumulate(c)
 
 	nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
 	nsq_config := nsq.NewConfig()
 
 	notify, _ := nsq.NewConsumer("highlight", "notifier", nsq_config)
-	notify.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
+	notify.AddHandler(nsq.HandlerFunc(func(m *nsq.Message) error {
 		var logged LoggedMessage
-		err := json.Unmarshal(message.Body, &logged)
+		err := json.Unmarshal(m.Body, &logged)
 
 		if err != nil {
 			panic(err)
 		}
 
-		messages <- &logged
+		c <- &logged
 		return nil
 	}))
 
@@ -141,36 +140,38 @@ func RemoveNotification(user string) {
 	}
 }
 
-func AddNotification(user string, pref *NotificationPref, message *LoggedMessage) {
+func AddNotification(u string, p *NotificationPref, m *LoggedMessage) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if notification, ok := notifications[user]; ok {
-		notification.Messages = append(notification.Messages, message)
-		notification.Timer.Reset(delay)
-		fmt.Fprintf(os.Stderr, "Accumulating message on %s\n", user)
+	if n, ok := notifications[u]; ok {
+		n.Messages = append(n.Messages, m)
+		n.Timer.Reset(delay)
+		fmt.Fprintf(os.Stderr, "Accumulating message on %s\n", u)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "New message on %s\n", user)
+	fmt.Fprintf(os.Stderr, "New message on %s\n", u)
 
-	notification := &Notification{
-		Pref:     pref,
-		User:     user,
-		Messages: []*LoggedMessage{message},
+	n := &Notification{
+		Pref:     p,
+		User:     u,
+		Messages: []*LoggedMessage{m},
 	}
-	notifications[user] = notification
-	notification.Timer = time.AfterFunc(delay, func() {
-		RemoveNotification(user)
-		if StreamCount(user) == 0 {
-			SendNotification(notification)
+
+	notifications[u] = n
+
+	n.Timer = time.AfterFunc(delay, func() {
+		RemoveNotification(u)
+		if StreamCount(u) == 0 {
+			n.Send()
 		} else {
 			fmt.Fprintf(os.Stderr, "Skipping notification due to open streams\n")
 		}
 	})
 }
 
-func Accumulate(messages chan *LoggedMessage) {
+func Accumulate(c chan *LoggedMessage) {
 	dsn := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=disable", db_user, db_pass, db_name, db_host)
 	db, err := sql.Open("postgres", dsn)
 
@@ -179,43 +180,65 @@ func Accumulate(messages chan *LoggedMessage) {
 	}
 
 	for {
-		message := <-messages
+		m := <-c
 
-		recieved := time.Unix(int64(message.Message.Time), 0)
+		recieved := time.Unix(int64(m.Message.Time), 0)
 		if recieved.Add(5 * time.Minute).Before(time.Now()) {
 			fmt.Fprintf(os.Stderr, "Message is too old, discarding.\n")
 		}
 
 		var (
-			email     string
-			user      string
-			emailPref sql.NullString
-			gcmPref   sql.NullString
+			user         string
+			emailPref    sql.NullString
+			emailEnabled bool
+			emailAddress string
 		)
 
 		err = db.QueryRow(`
-			SELECT u.email, u.id, p.value, p2.value
+			SELECT u.email, u.id, p.value
 				FROM connection AS c
-			LEFT JOIN "user" AS u
+			JOIN "user" AS u
 				ON c."user" = u.id
 			LEFT JOIN pref AS p
 				ON p."user" = u.id
 				AND p.name = 'email'
-			LEFT JOIN pref AS p2
-			  ON p2."user" = u.id
-				AND p2.name = 'gcm_sub'
 			WHERE c.id=$1
-		  `, message.ConnectionId,
-		).Scan(&email, &user, &emailPref, &gcmPref)
+		  `, m.ConnectionId,
+		).Scan(&emailAddress, &user, &emailPref)
+
+		emailEnabled = emailPref.Valid && emailPref.String == "true"
+
+		var (
+			webpushConfigs []*WebPushConfig
+			endpoint       string
+			auth           string
+			key            string
+		)
+
+		rows, err := db.Query(`
+			SELECT endpoint, auth, key
+				FROM web_push
+			WHERE "user"=$1
+			`, user,
+		)
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error selecting email pref (probably unset): '%s'\n", err)
-			continue
+			panic(err)
 		}
 
-		if !emailPref.Valid && !gcmPref.Valid {
-			fmt.Fprintf(os.Stderr, "No notification prefs enabled for '%s'\n", user)
-			continue
+		defer rows.Close()
+
+		for rows.Next() {
+			err := rows.Scan(&endpoint, &auth, &key)
+			if err != nil {
+				panic(err)
+			}
+			config := &WebPushConfig{
+				Endpoint: endpoint,
+				Auth:     auth,
+				Key:      key,
+			}
+			webpushConfigs = append(webpushConfigs, config)
 		}
 
 		// Skip if user has any streams open
@@ -224,22 +247,13 @@ func Accumulate(messages chan *LoggedMessage) {
 			continue
 		}
 
-		gcm_config := &GCMNotificationConfig{}
-
-		if gcmPref.Valid {
-			err = json.Unmarshal([]byte(gcmPref.String), &gcm_config)
-			if err != nil {
-				panic(err)
-			}
+		p := &NotificationPref{
+			WebPushConfigs: webpushConfigs,
+			EmailEnabled:   emailEnabled,
+			EmailAddress:   emailAddress,
 		}
 
-		pref := &NotificationPref{
-			GCMEnabled:   gcmPref.Valid,
-			GCM:          gcm_config,
-			EmailEnabled: emailPref.Valid && emailPref.String == "true",
-			Email:        email,
-		}
-		AddNotification(user, pref, message)
+		AddNotification(user, p, m)
 	}
 }
 
@@ -278,49 +292,48 @@ func RateLimit(user string) bool {
 	return false
 }
 
-func SendNotification(notification *Notification) {
-	if RateLimit(notification.User) {
+func (n *Notification) Send() {
+	if RateLimit(n.User) {
 		fmt.Fprintf(os.Stderr, "Canceling notification\n")
 		return
 	}
 
-	if notification.Pref.EmailEnabled {
-		SendEmail(notification)
-	}
-	if notification.Pref.GCMEnabled {
-		NotifyGCM(notification)
+	if n.Pref.EmailEnabled {
+		SendEmail(n.Messages, n.Pref.EmailAddress)
 	}
 
-	last[notification.User] = time.Now()
+	for _, c := range n.Pref.WebPushConfigs {
+		SendWebPush(n.Messages, c)
+	}
+
+	last[n.User] = time.Now()
 }
 
-func NotifyGCM(notification *Notification) {
-	parts := strings.Split(notification.Pref.GCM.Endpoint, "/")
+func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
+	parts := strings.Split(c.Endpoint, "/")
 	id := parts[len(parts)-1]
 
-	key, err := base64.StdEncoding.DecodeString(
-		notification.Pref.GCM.Key)
+	key, err := base64.StdEncoding.DecodeString(c.Key)
 
 	if err != nil {
 		panic(err)
 	}
 
-	auth, err := base64.StdEncoding.DecodeString(
-		notification.Pref.GCM.Auth)
+	auth, err := base64.StdEncoding.DecodeString(c.Auth)
 
 	if err != nil {
 		panic(err)
 	}
 
 	sub := &webpush.Subscription{
-		notification.Pref.GCM.Endpoint,
+		c.Endpoint,
 		key,
 		auth,
 	}
 
-	payload := &GCMNotification{
+	payload := &WebPush{
 		To:   id,
-		Data: notification.Messages,
+		Data: m,
 	}
 
 	var buf bytes.Buffer
@@ -333,17 +346,17 @@ func NotifyGCM(notification *Notification) {
 	webpush.Send(nil, sub, buf.String(), gcm_key)
 }
 
-func SendEmail(notification *Notification) {
+func SendEmail(ms []*LoggedMessage, emailAddress string) {
 	var (
 		lines   []string
 		subject string
 	)
 
-	for _, message := range notification.Messages {
-		from := message.Message.Prefix.Name
-		channel := message.Message.Params[0]
-		text := message.Message.Params[1]
-		connection := message.ConnectionId
+	for _, m := range ms {
+		from := m.Message.Prefix.Name
+		channel := m.Message.Params[0]
+		text := m.Message.Params[1]
+		connection := m.ConnectionId
 
 		line := fmt.Sprintf("    [%s] < %s> %s\n    %s/app/#/%s/%s", channel, from, text, api_url, connection, url.PathEscape(channel))
 		lines = append(lines, line)
@@ -353,8 +366,7 @@ func SendEmail(notification *Notification) {
 		}
 	}
 
-	email := notification.Pref.Email
-	msg := []byte(fmt.Sprintf("To: %s\r\n", email) +
+	msg := []byte(fmt.Sprintf("To: %s\r\n", emailAddress) +
 		fmt.Sprintf(
 			"From: Relaychat Party <no-reply@relaychat.party>\n"+
 				"Subject: %s\n", subject) +
@@ -365,7 +377,7 @@ func SendEmail(notification *Notification) {
 		"\r\n")
 
 	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
-	err := smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{email}, msg)
+	err := smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{emailAddress}, msg)
 
 	if err != nil {
 		panic(err)

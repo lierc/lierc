@@ -343,7 +343,15 @@ func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 		panic(err)
 	}
 
-	webpush.Send(nil, sub, buf.String(), gcm_key)
+	fmt.Fprintf(os.Stderr, "sending webpush '%s'\n", c.Endpoint)
+
+	res, err := webpush.Send(nil, sub, buf.String(), gcm_key)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "%s\n", res.Status)
 }
 
 func SendEmail(ms []*LoggedMessage, emailAddress string) {
@@ -365,6 +373,8 @@ func SendEmail(ms []*LoggedMessage, emailAddress string) {
 			subject = fmt.Sprintf("[%s] < %s> %s", channel, from, text)
 		}
 	}
+
+	fmt.Fprintf(os.Stderr, "sending email '%s'\n", emailAddress)
 
 	msg := []byte(fmt.Sprintf("To: %s\r\n", emailAddress) +
 		fmt.Sprintf(

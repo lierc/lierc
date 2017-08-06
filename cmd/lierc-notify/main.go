@@ -3,13 +3,12 @@ package main
 import (
 	"bytes"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/googlechrome/push-encryption-go/webpush"
 	_ "github.com/lib/pq"
 	"github.com/lierc/lierc/pkg/lierc"
 	"github.com/nsqio/go-nsq"
+	webpush "github.com/sherclockholmes/webpush-go"
 	"golang.org/x/time/rate"
 	"io/ioutil"
 	"net/http"
@@ -30,9 +29,9 @@ type LoggedMessage struct {
 }
 
 type WebPushConfig struct {
-	Endpoint string `json:"endpoint"`
-	Key      string `json:"key"`
-	Auth     string `json:"auth"`
+	Endpoint string
+	Key      string
+	Auth     string
 }
 
 type WebPush struct {
@@ -68,6 +67,7 @@ var (
 	api_key       = os.Getenv("API_KEY")
 	api_url       = os.Getenv("API_URL")
 	gcm_key       = os.Getenv("GCM_KEY")
+	vapid_priv    = os.Getenv("VAPID_PRIVATE")
 )
 
 func main() {
@@ -233,6 +233,7 @@ func Accumulate(c chan *LoggedMessage) {
 			if err != nil {
 				panic(err)
 			}
+
 			config := &WebPushConfig{
 				Endpoint: endpoint,
 				Auth:     auth,
@@ -313,22 +314,14 @@ func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 	parts := strings.Split(c.Endpoint, "/")
 	id := parts[len(parts)-1]
 
-	key, err := base64.StdEncoding.DecodeString(c.Key)
-
-	if err != nil {
-		panic(err)
-	}
-
-	auth, err := base64.StdEncoding.DecodeString(c.Auth)
-
-	if err != nil {
-		panic(err)
+	keys := &webpush.Keys{
+		Auth:   c.Auth,
+		P256dh: c.Key,
 	}
 
 	sub := &webpush.Subscription{
-		c.Endpoint,
-		key,
-		auth,
+		Endpoint: c.Endpoint,
+		Keys:     *keys,
 	}
 
 	payload := &WebPush{
@@ -337,7 +330,7 @@ func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 	}
 
 	var buf bytes.Buffer
-	err = json.NewEncoder(&buf).Encode(&payload)
+	err := json.NewEncoder(&buf).Encode(&payload)
 
 	if err != nil {
 		panic(err)
@@ -345,13 +338,24 @@ func SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 
 	fmt.Fprintf(os.Stderr, "sending webpush '%s'\n", c.Endpoint)
 
-	res, err := webpush.Send(nil, sub, buf.String(), gcm_key)
+	res, err := webpush.SendNotification(buf.Bytes(), sub, &webpush.Options{
+		Subscriber:      api_url,
+		TTL:             10,
+		VAPIDPrivateKey: vapid_priv,
+	})
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
+		panic(err)
 	}
 
 	fmt.Fprintf(os.Stderr, "%s\n", res.Status)
+	body, err := ioutil.ReadAll(res.Body)
+
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Fprintf(os.Stderr, "%s\n", body)
 }
 
 func SendEmail(ms []*LoggedMessage, emailAddress string) {

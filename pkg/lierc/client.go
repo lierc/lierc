@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var hostname, _ = os.Hostname()
+
 var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
 var Status = make(chan *IRCClient)
@@ -21,6 +23,8 @@ type IRCClient struct {
 	Config     *IRCConfig
 	Channels   map[string]*IRCChannel
 	Nick       string
+	User       string
+	Host       string
 	Registered bool
 	Status     *IRCClientStatus
 	Isupport   []string
@@ -82,6 +86,8 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		incoming: incoming,
 		debug:    LogLevel(os.Getenv("LIERC_DEBUG")),
 		Nick:     config.Nick,
+		User:     config.User,
+		Host:     hostname,
 		quit:     make(chan struct{}),
 		quitting: false,
 		Id:       Id,
@@ -266,7 +272,6 @@ func (c *IRCClient) Register() {
 		user = c.Config.Nick
 	}
 
-	hostname, _ := os.Hostname()
 	c.Send(fmt.Sprintf(
 		"USER %s %s %s %s",
 		user,

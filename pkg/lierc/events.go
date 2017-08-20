@@ -109,6 +109,8 @@ func init() {
 		}
 		if channel, ok := c.Channels[name]; ok {
 			channel.Nicks[nick] = []byte{}
+			c.Host = m.Prefix.Server
+			c.User = m.Prefix.User
 		}
 	}
 

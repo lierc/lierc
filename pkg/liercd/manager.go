@@ -99,8 +99,7 @@ func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientM
 }
 
 func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
-	hostname, _ := os.Hostname()
-	prefix := ":" + c.Nick + "!" + c.Config.User + "@" + hostname
+	prefix := ":" + c.Nick + "!" + c.User + "@" + c.Host
 	_, message := lierc.ParseIRCMessage(prefix + " " + line)
 
 	return &lierc.IRCClientMessage{

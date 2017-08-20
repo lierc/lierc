@@ -81,22 +81,19 @@ func (m *ClientManager) RemoveClient(c *lierc.IRCClient) {
 	delete(m.Clients, c.Id)
 }
 
-func (m *ClientManager) ConnectEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf(":%s CONNECT :%s", c.Config.Host, c.Status.Message)
-	_, message := lierc.ParseIRCMessage(line)
-
-	return &lierc.IRCClientMessage{
-		Id:      c.Id,
-		Message: message,
+func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientMessage {
+	var event string
+	if s.Connected {
+		event = "CONNECT"
+	} else {
+		event = "DISCONNECT"
 	}
-}
 
-func (m *ClientManager) DisconnectEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf(":%s DISCONNECT :%s", c.Config.Host, c.Status.Message)
+	var line = fmt.Sprintf(":%s %s :%s", s.Host, event, s.Message)
 	_, message := lierc.ParseIRCMessage(line)
 
 	return &lierc.IRCClientMessage{
-		Id:      c.Id,
+		Id:      s.Id,
 		Message: message,
 	}
 }

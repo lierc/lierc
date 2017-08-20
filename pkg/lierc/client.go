@@ -15,35 +15,38 @@ var hostname, _ = os.Hostname()
 
 var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
-var Status = make(chan *IRCClient)
+var Status = make(chan *IRCClientStatus)
 
 type IRCClient struct {
 	sync.RWMutex
-	Id         string
-	Config     *IRCConfig
-	Channels   map[string]*IRCChannel
-	Nick       string
-	User       string
-	Host       string
-	Registered bool
-	Status     *IRCClientStatus
-	Isupport   []string
-	irc        *IRCConn
-	prefix     [][]byte
-	chantypes  []byte
-	incoming   chan *IRCMessage
-	status     chan *IRCClientStatus
-	quit       chan struct{}
-	quitting   bool
-	Retries    int
-	debug      int64
-	timer      *time.Timer
-	wg         *sync.WaitGroup
+	Id            string
+	Config        *IRCConfig
+	Channels      map[string]*IRCChannel
+	Nick          string
+	User          string
+	Host          string
+	Registered    bool
+	Connected     bool
+	StatusMessage string
+	Isupport      []string
+	irc           *IRCConn
+	prefix        [][]byte
+	chantypes     []byte
+	incoming      chan *IRCMessage
+	status        chan *IRCClientStatus
+	quit          chan struct{}
+	quitting      bool
+	Retries       int
+	debug         int64
+	timer         *time.Timer
+	wg            *sync.WaitGroup
 }
 
 type IRCClientStatus struct {
 	Connected bool
 	Message   string
+	Id        string
+	Host      string
 }
 
 type IRCClientMultiMessage struct {
@@ -74,23 +77,21 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 	incoming := make(chan *IRCMessage)
 
 	c := &IRCClient{
-		Config:     config,
-		Registered: false,
-		Isupport:   make([]string, 0),
-		Channels:   make(map[string]*IRCChannel),
-		Status: &IRCClientStatus{
-			Connected: false,
-			Message:   "Connecting",
-		},
-		status:   status,
-		incoming: incoming,
-		debug:    LogLevel(os.Getenv("LIERC_DEBUG")),
-		Nick:     config.Nick,
-		User:     config.User,
-		Host:     hostname,
-		quit:     make(chan struct{}),
-		quitting: false,
-		Id:       Id,
+		Config:        config,
+		Registered:    false,
+		Isupport:      make([]string, 0),
+		Channels:      make(map[string]*IRCChannel),
+		Connected:     false,
+		StatusMessage: "Connecting",
+		status:        status,
+		incoming:      incoming,
+		debug:         LogLevel(os.Getenv("LIERC_DEBUG")),
+		Nick:          config.Nick,
+		User:          config.User,
+		Host:          hostname,
+		quit:          make(chan struct{}),
+		quitting:      false,
+		Id:            Id,
 		prefix: [][]byte{
 			[]byte{'@', 'o'},
 			[]byte{'+', 'v'},
@@ -100,7 +101,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 	}
 
 	c.irc = c.CreateConn()
-	Status <- c
+	Status <- c.Status()
 
 	go c.Event()
 	go c.irc.Connect(config.Server(), config.Ssl)
@@ -126,8 +127,8 @@ func (c *IRCClient) CreateConn() *IRCConn {
 func (c *IRCClient) Destroy() {
 	c.Lock()
 	c.quitting = true
+	c.StatusMessage = "Closing connection"
 	c.wg = &sync.WaitGroup{}
-	c.Status.Message = "Closing connection"
 	c.Unlock()
 
 	c.wg.Add(1)
@@ -141,7 +142,7 @@ func (c *IRCClient) Destroy() {
 		c.wg.Done()
 	})
 
-	Status <- c
+	Status <- c.Status()
 
 	c.Send("QUIT bye")
 	c.wg.Wait()
@@ -149,11 +150,20 @@ func (c *IRCClient) Destroy() {
 	close(c.quit)
 }
 
+func (c *IRCClient) Status() *IRCClientStatus {
+	return &IRCClientStatus{
+		Id:        c.Id,
+		Message:   c.StatusMessage,
+		Connected: c.Connected,
+		Host:      c.Config.Host,
+	}
+}
+
 func (c *IRCClient) Send(line string) {
 	if c.debug > 1 {
 		log.Printf("%s ---> %s", c.Id, line)
 	}
-	if c.Status.Connected {
+	if c.Connected {
 		c.irc.outgoing <- line
 	}
 }
@@ -174,11 +184,13 @@ func (c *IRCClient) Event() {
 			}
 		case status := <-c.status:
 			c.Lock()
-			c.Status = status
+			c.Connected = status.Connected
+			c.StatusMessage = status.Message
 			c.Unlock()
 
-			Status <- c
-			if status.Connected {
+			Status <- c.Status()
+
+			if c.Connected {
 				c.Register()
 			} else if !c.quitting {
 				c.Reconnect()
@@ -210,20 +222,21 @@ func (c *IRCClient) Reconnect() {
 		delay = 300
 	}
 	seconds := time.Duration(delay) * time.Second
+	c.Connected = false
+	c.StatusMessage = fmt.Sprintf("Reconnecting in %s", seconds)
+
+	Status <- c.Status()
+
 	if c.debug > 0 {
-		log.Printf("%s Reconnecting in %s", c.Id, seconds)
+		log.Printf("%s %s", c.Id, c.StatusMessage)
 	}
-
-	c.Status = &IRCClientStatus{
-		Connected: false,
-		Message:   fmt.Sprintf("Reconnecting in %s", seconds),
-	}
-
-	Status <- c
 
 	c.timer = time.AfterFunc(seconds, func() {
+		c.Lock()
 		config := c.Config
 		c.irc = c.CreateConn()
+		c.Unlock()
+
 		c.irc.Connect(config.Server(), config.Ssl)
 	})
 }
@@ -354,7 +367,7 @@ func (c *IRCClient) ClientData() *IRCClientData {
 		Nick:       c.Nick,
 		Channels:   channels,
 		Registered: c.Registered,
-		Status:     c.Status,
+		Status:     c.Status(),
 		Isupport:   c.Isupport,
 	}
 }

@@ -304,15 +304,8 @@ func (c *IRCClient) Register() {
 }
 
 func (c *IRCClient) CapList(caps []string) {
-	if !c.Config.SASL {
-		return
-	}
-
 	for _, cp := range caps {
-		if cp == "sasl" {
-			c.Send("CAP REQ :sasl")
-			return
-		}
+		c.Caps[cp] = false
 	}
 }
 
@@ -340,7 +333,7 @@ func (c *IRCClient) SASLAuthFailed(s string) {
 }
 
 func (c *IRCClient) SASLStart() {
-	c.Send("CAP LS")
+	c.Send("CAP REQ :sasl")
 }
 
 func (c *IRCClient) SASLAuth(s string) {

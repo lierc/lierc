@@ -105,12 +105,12 @@ func init() {
 				Nicks:  make(map[string][]byte),
 				Synced: false,
 			}
+			c.Host = m.Prefix.Server
+			c.User = m.Prefix.User
 			c.Send(fmt.Sprintf("MODE %s", m.Params[0]))
 		}
 		if channel, ok := c.Channels[name]; ok {
 			channel.Nicks[nick] = []byte{}
-			c.Host = m.Prefix.Server
-			c.User = m.Prefix.User
 		}
 	}
 

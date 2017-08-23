@@ -321,8 +321,8 @@ func (c *IRCClient) CapAck(caps []string) {
 		c.Caps[cp] = true
 	}
 
-	if !c.Registered {
-		if c.Config.SASL && c.Caps["sasl"] {
+	if !c.Registered && c.Config.SASL {
+		if c.Caps["sasl"] {
 			c.Send("AUTHENTICATE PLAIN")
 		} else {
 			c.irc.Close()
@@ -365,8 +365,8 @@ func (c *IRCClient) CapNak(caps []string) {
 		c.Caps[cp] = false
 	}
 
-	if !c.Registered {
-		if c.Config.SASL && !c.Caps["sasl"] {
+	if !c.Registered && c.Config.SASL {
+		if !c.Caps["sasl"] {
 			c.irc.Close()
 		}
 	}

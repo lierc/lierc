@@ -11,6 +11,7 @@ type IRCConfig struct {
 	Nick      string
 	User      string
 	Pass      string
+	SASL      bool
 	Alias     string
 	Channels  []string
 	Highlight []string

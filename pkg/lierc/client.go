@@ -2,6 +2,7 @@ package lierc
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"golang.org/x/time/rate"
 	"log"
@@ -26,6 +27,7 @@ type IRCClient struct {
 	User          string
 	Host          string
 	Registered    bool
+	Caps          map[string]bool
 	Connected     bool
 	StatusMessage string
 	Isupport      []string
@@ -82,6 +84,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		Isupport:      make([]string, 0),
 		Channels:      make(map[string]*IRCChannel),
 		Connected:     false,
+		Caps:          make(map[string]bool),
 		StatusMessage: "Connecting",
 		status:        status,
 		incoming:      incoming,
@@ -191,7 +194,11 @@ func (c *IRCClient) Event() {
 			Status <- c.Status()
 
 			if c.Connected {
-				c.Register()
+				if c.Config.SASL {
+					c.SASLStart()
+				} else {
+					c.Register()
+				}
 			} else if !c.quitting {
 				c.Reconnect()
 			} else {
@@ -276,7 +283,7 @@ func (c *IRCClient) Welcome() {
 }
 
 func (c *IRCClient) Register() {
-	if c.Config.Pass != "" {
+	if !c.Config.SASL && c.Config.Pass != "" {
 		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
 	}
 
@@ -294,6 +301,75 @@ func (c *IRCClient) Register() {
 	))
 
 	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
+}
+
+func (c *IRCClient) CapList(caps []string) {
+	if !c.Config.SASL {
+		return
+	}
+
+	for _, cp := range caps {
+		if cp == "sasl" {
+			c.Send("CAP REQ :sasl")
+			return
+		}
+	}
+}
+
+func (c *IRCClient) CapAck(caps []string) {
+	for _, cp := range caps {
+		c.Caps[cp] = true
+	}
+
+	if !c.Registered {
+		if c.Config.SASL && c.Caps["sasl"] {
+			c.Send("AUTHENTICATE PLAIN")
+		} else {
+			c.irc.Close()
+		}
+	}
+}
+
+func (c *IRCClient) SASLAuthSuccess() {
+	c.Send("CAP END")
+	c.Register()
+}
+
+func (c *IRCClient) SASLAuthFailed(s string) {
+	c.irc.Close()
+}
+
+func (c *IRCClient) SASLStart() {
+	c.Send("CAP LS")
+}
+
+func (c *IRCClient) SASLAuth(s string) {
+	if s != "+" {
+		log.Printf("Unexpected SASL response")
+		c.irc.Close()
+		return
+	}
+
+	in := []byte(c.Config.User)
+
+	in = append(in, 0x0)
+	in = append(in, []byte(c.Config.User)...)
+	in = append(in, 0x0)
+	in = append(in, []byte(c.Config.Pass)...)
+
+	c.Send(fmt.Sprintf("AUTHENTICATE %s", base64.StdEncoding.EncodeToString(in)))
+}
+
+func (c *IRCClient) CapNak(caps []string) {
+	for _, cp := range caps {
+		c.Caps[cp] = false
+	}
+
+	if !c.Registered {
+		if c.Config.SASL && !c.Caps["sasl"] {
+			c.irc.Close()
+		}
+	}
 }
 
 func (c *IRCClient) NicksWithPrefix(channel *IRCChannel) []string {

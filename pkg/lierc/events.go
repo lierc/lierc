@@ -216,4 +216,34 @@ func init() {
 			Channels: channels,
 		}
 	}
+
+	handlers["CAP"] = func(c *IRCClient, m *IRCMessage) {
+		if len(m.Params) < 2 {
+			return
+		}
+
+		switch m.Params[1] {
+		case "LS":
+			c.CapList(strings.Split(m.Params[2], " "))
+		case "ACK":
+			c.CapAck(strings.Split(m.Params[2], " "))
+		case "NAK":
+			c.CapNak(strings.Split(m.Params[2], " "))
+		}
+	}
+
+	handlers["AUTHENTICATE"] = func(c *IRCClient, m *IRCMessage) {
+		c.SASLAuth(m.Params[0])
+	}
+
+	e := []string{"902", "904", "905", "906"}
+	for _, i := range e {
+		handlers[i] = func(c *IRCClient, m *IRCMessage) {
+			c.SASLAuthFailed(m.Params[0])
+		}
+	}
+
+	handlers["903"] = func(c *IRCClient, m *IRCMessage) {
+		c.SASLAuthSuccess()
+	}
 }

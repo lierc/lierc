@@ -208,7 +208,7 @@ func logType(m *lierc.IRCMessage) string {
 		}
 	}
 
-	if m.Command[0] == '4' || m.Command[0] == '5' {
+	if m.Command[0] == '4' || m.Command[0] == '5' || m.Command[0] == '9' {
 		return "status"
 	}
 

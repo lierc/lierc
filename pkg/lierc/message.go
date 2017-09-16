@@ -19,6 +19,7 @@ type IRCMessage struct {
 	Raw     string
 	Time    float64
 	Params  []string
+	Direct  bool
 }
 
 func ParseIRCMessage(line string) (error, *IRCMessage) {
@@ -32,6 +33,7 @@ func ParseIRCMessage(line string) (error, *IRCMessage) {
 	m := IRCMessage{
 		Raw:    raw,
 		Prefix: &IRCPrefix{Self: false},
+		Direct: false,
 		Time:   now,
 	}
 

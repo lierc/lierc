@@ -189,7 +189,12 @@ func init() {
 		c.Send(fmt.Sprintf("PONG %s", m.Params[0]))
 	}
 
+	handlers["NOTICE"] = func(c *IRCClient, m *IRCMessage) {
+		m.Direct = m.Params[0] == c.Nick
+	}
+
 	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage) {
+		m.Direct = m.Params[0] == c.Nick
 		text := m.Params[1]
 		if len(text) >= 7 && text[0:7] == "\x01VERSION" {
 			log.Printf("%v", m)

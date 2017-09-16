@@ -28,7 +28,6 @@ type LoggedMessage struct {
 	ConnectionId string
 	MessageId    int
 	Highlight    bool
-	Direct       bool
 }
 
 var hostname, _ = os.Hostname()
@@ -43,7 +42,6 @@ var loggable = map[string]string{
 	"ERROR":      "status",
 	"CONNECT":    "status",
 	"DISCONNECT": "status",
-	"NOTICE":     "#",
 	"001":        "status",
 	"002":        "status",
 	"003":        "status",
@@ -89,10 +87,10 @@ func main() {
 		nsq_config := nsq.NewConfig()
 		write, _ := nsq.NewProducer(nsqd, nsq_config)
 		for {
-			event := <-send_event
-			json, _ := json.Marshal(event)
+			e := <-send_event
+			json, _ := json.Marshal(e)
 			write.Publish("logged", json)
-			if event.Highlight || event.Direct {
+			if e.Highlight || (e.Message.Direct && !e.Message.Prefix.Self) {
 				write.Publish("highlight", json)
 			}
 		}
@@ -126,20 +124,20 @@ func main() {
 	}))
 
 	chats, _ := nsq.NewConsumer("chats", "logger", nsq_config)
-	chats.AddHandler(nsq.HandlerFunc(func(message *nsq.Message) error {
-		client_message := lierc.IRCClientMessage{}
-		err := json.Unmarshal(message.Body, &client_message)
+	chats.AddHandler(nsq.HandlerFunc(func(n *nsq.Message) error {
+		m := lierc.IRCClientMessage{}
+		err := json.Unmarshal(n.Body, &m)
 
 		if err != nil {
 			panic(err)
 		}
 
-		log_type := logType(client_message.Message.Command)
+		log_type := logType(m.Message)
 
 		if log_type == "pass" {
 			send_event <- &LoggedMessage{
-				Message:      client_message.Message,
-				ConnectionId: client_message.Id,
+				Message:      m.Message,
+				ConnectionId: m.Id,
 				Highlight:    false,
 			}
 
@@ -150,50 +148,39 @@ func main() {
 			return nil
 		}
 
-		var (
-			channel string
-			direct  bool
-		)
+		var channel string
 
 		if log_type == "#" {
-			channel = client_message.Message.Params[0]
-
-			// private message because it is an invalid channel name
-			// log using sender as "channel"
-			if !isChannel(channel[0]) {
-				if !client_message.Message.Prefix.Self {
-					channel = client_message.Message.Prefix.Name
-				}
-
-				err := insertPrivate(db, client_message.Id, channel, client_message.Message.Time)
+			if m.Message.Direct && !m.Message.Prefix.Self {
+				channel = m.Message.Prefix.Name
+				err := insertPrivate(db, m.Id, channel, m.Message.Time)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error logging privmsg: %v", err)
 				}
-				direct = true
+			} else {
+				channel = m.Message.Params[0]
 			}
-
 		} else {
 			channel = log_type
 		}
 
 		var highlight = false
 
-		if !client_message.Message.Prefix.Self && client_message.Message.Command == "PRIVMSG" {
+		if !m.Message.Prefix.Self && m.Message.Command == "PRIVMSG" {
 			highlighters.RLock()
 			defer highlighters.RUnlock()
-			if pattern, ok := highlighters.connection[client_message.Id]; ok {
-				highlight = pattern.Match([]byte(client_message.Message.Params[1]))
+			if pattern, ok := highlighters.connection[m.Id]; ok {
+				highlight = pattern.Match([]byte(m.Message.Params[1]))
 			}
 		}
 
-		id := insertMessage(db, client_message.Id, client_message.Message, channel, highlight)
+		id := insertMessage(db, m.Id, m.Message, channel, highlight)
 
 		send_event <- &LoggedMessage{
 			MessageId:    id,
-			Message:      client_message.Message,
-			ConnectionId: client_message.Id,
+			Message:      m.Message,
+			ConnectionId: m.Id,
 			Highlight:    highlight,
-			Direct:       direct,
 		}
 
 		return nil
@@ -206,14 +193,22 @@ func main() {
 	wg.Wait()
 }
 
-func logType(command string) string {
-	t, ok := loggable[command]
+func logType(m *lierc.IRCMessage) string {
+	t, ok := loggable[m.Command]
 
 	if ok {
 		return t
 	}
 
-	if command[0] == 52 || command[0] == 53 {
+	if m.Command == "NOTICE" {
+		if m.Direct {
+			return "#"
+		} else {
+			return "status"
+		}
+	}
+
+	if m.Command[0] == '4' || m.Command[0] == '5' {
 		return "status"
 	}
 
@@ -231,33 +226,31 @@ func insertPrivate(db *sql.DB, client_id string, nick string, time float64) erro
 	return err
 }
 
-func insertMessage(db *sql.DB, client_id string, message *lierc.IRCMessage, channel string, highlight bool) int {
-	value, err := json.Marshal(message)
+func insertMessage(db *sql.DB, client_id string, m *lierc.IRCMessage, channel string, highlight bool) int {
+	v, err := json.Marshal(m)
 
 	if err != nil {
 		panic(err)
 	}
 
-	var message_id int
-	privmsg := strings.ToUpper(message.Command) == "PRIVMSG"
-	channel = strings.ToLower(channel)
+	var i int
 
 	insert_err := db.QueryRow(
-		"INSERT INTO log (connection, channel, privmsg, message, time, self, highlight) VALUES($1,$2,$3,$4,to_timestamp($5),$6,$7) RETURNING id",
+		"INSERT INTO log (connection, channel, command, message, time, self, highlight) VALUES($1,$2,$3,$4,to_timestamp($5),$6,$7) RETURNING id",
 		client_id,
-		channel,
-		privmsg,
-		value,
-		message.Time,
-		message.Prefix.Self,
+		strings.ToLower(channel),
+		strings.ToUpper(m.Command),
+		v,
+		m.Time,
+		m.Prefix.Self,
 		highlight,
-	).Scan(&message_id)
+	).Scan(&i)
 
 	if insert_err != nil {
 		panic(insert_err)
 	}
 
-	return message_id
+	return i
 }
 
 func updateHighlighters(db *sql.DB) {

@@ -14,10 +14,10 @@
   version = "v1.1.0"
 
 [[projects]]
-  branch = "master"
   name = "github.com/dgrijalva/jwt-go"
   packages = ["."]
-  revision = "a539ee1a749a2b895533f979515ac7e6e0f5b650"
+  revision = "d2709f9f1f31ebcda9651b03077758c1f3a0018c"
+  version = "v3.0.0"
 
 [[projects]]
   branch = "master"
@@ -26,14 +26,16 @@
   revision = "553a641470496b2327abcac10b36396bd98e45c9"
 
 [[projects]]
+  branch = "master"
   name = "github.com/lib/pq"
   packages = [".","oid"]
-  revision = "dd1fe2071026ce53f36a39112e645b4d4f5793a4"
+  revision = "23da1db4f16d9658a86ae9b717c245fc078f10f1"
 
 [[projects]]
   name = "github.com/nsqio/go-nsq"
   packages = ["."]
-  revision = "973bf9a2952ff7e38071ae8392b73e4418503059"
+  revision = "eee57a3ac4174c55924125bb15eeeda8cffb6e6f"
+  version = "v1.0.7"
 
 [[projects]]
   name = "github.com/pmezard/go-difflib"
@@ -45,7 +47,7 @@
   branch = "master"
   name = "github.com/sherclockholmes/webpush-go"
   packages = ["."]
-  revision = "cf20a3c88875063e23f0cb8af144bdab2768a413"
+  revision = "739e7e5e1952b73b52f6f5ce711d800f8c133f23"
 
 [[projects]]
   branch = "master"
@@ -60,15 +62,16 @@
   version = "v1.1.4"
 
 [[projects]]
+  branch = "master"
   name = "golang.org/x/crypto"
   packages = ["hkdf"]
-  revision = "40541ccb1c6e64c947ed6f606b8a6cb4b67d7436"
+  revision = "7d9177d70076375b9a59c8fde23d52d9c4a7ecd5"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/net"
   packages = ["context"]
-  revision = "1c05540f6879653db88113bc4a2b70aec4bd491f"
+  revision = "411fb0e25fd2511cc621c22e3e602e4eca2314de"
 
 [[projects]]
   branch = "master"
@@ -79,6 +82,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "0f49937b4ccf17cdcedec6367e2a194281a46fea6e874c8931adaa7b97f5337e"
+  inputs-digest = "7e141df1c0c6f2ed2dda449320fefa522d6585e41ef6f68b363a4c604a41b303"
   solver-name = "gps-cdcl"
   solver-version = 1

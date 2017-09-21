@@ -16,9 +16,16 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 
 	for _, m := range ms {
 		from := m.Message.Prefix.Name
-		channel := m.Message.Params[0]
 		text := m.Message.Params[1]
 		connection := m.ConnectionId
+
+		var channel string
+
+		if m.Message.Direct {
+			channel = "direct"
+		} else {
+			channel = m.Message.Params[0]
+		}
 
 		line := fmt.Sprintf("    [%s] < %s> %s\n    %s/app/#/%s/%s", channel, from, text, n.Config.APIURL, connection, url.PathEscape(channel))
 		lines = append(lines, line)

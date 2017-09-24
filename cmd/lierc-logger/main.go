@@ -285,7 +285,7 @@ func updateHighlighters(db *sql.DB) {
 		for _, term := range terms {
 			matched, _ := regexp.MatchString("\\S", term)
 			if matched {
-				parts = append(parts, "\\Q"+term+"\\E")
+				parts = append(parts, regexp.QuoteMeta(term))
 			}
 		}
 

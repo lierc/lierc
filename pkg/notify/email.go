@@ -41,10 +41,15 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 		fmt.Sprintf(
 			"From: Relaychat Party <no-reply@relaychat.party>\n"+
 				"Subject: %s\n", subject) +
+		"MIME-Version: 1.0\n" +
+		"Content-Type: text/plain; charset=\"utf-8\"\n" +
+		"Content-Transfer-Encoding: 8bit\n" +
+		"X-Mailer: LeeMail 1.0\n" +
 		"\r\n" +
 		"You were mentioned in the following channels:\n\n" +
 		strings.Join(lines, "\n\n") + "\n\n" +
-		"Please do not reply to this message." +
+		"This message is coming from the relaychat.party IRC client. You enabled email notifications in the client. When someone mentions your name, or uses a word that matches a highlight term you configured, you will recieve an email from us. If you would like to stop recieving these messages, please use this link to unsubscribe: https://relaychat.party/app/unsubscribe\n\n" +
+		"Thank you for using relaychat.party!" +
 		"\r\n")
 
 	auth := smtp.PlainAuth("", "", "", "127.0.0.1")

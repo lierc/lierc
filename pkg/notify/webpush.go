@@ -6,6 +6,7 @@ import (
 	"fmt"
 	webpush "github.com/sherclockholmes/webpush-go"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"strings"
 )
@@ -14,6 +15,7 @@ type WebPushConfig struct {
 	Endpoint string
 	Key      string
 	Auth     string
+	User     string
 }
 
 type WebPush struct {
@@ -21,7 +23,7 @@ type WebPush struct {
 	Data []*LoggedMessage `json:"data"`
 }
 
-func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
+func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) (*http.Response, error) {
 	parts := strings.Split(c.Endpoint, "/")
 	id := parts[len(parts)-1]
 
@@ -44,7 +46,7 @@ func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 	err := json.NewEncoder(&buf).Encode(&payload)
 
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	fmt.Fprintf(os.Stderr, "sending webpush '%s'\n", c.Endpoint)
@@ -56,15 +58,17 @@ func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) {
 	})
 
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	fmt.Fprintf(os.Stderr, "%s\n", res.Status)
 	body, err := ioutil.ReadAll(res.Body)
 
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	fmt.Fprintf(os.Stderr, "%s\n", body)
+
+	return res, nil
 }

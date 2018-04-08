@@ -208,6 +208,7 @@ func (n *Notifier) Accumulate() {
 				Endpoint: endpoint,
 				Auth:     auth,
 				Key:      key,
+				User:     user,
 			}
 			webpushConfigs = append(webpushConfigs, config)
 		}
@@ -233,6 +234,7 @@ func (n *Notifier) Accumulate() {
 
 			config := &APNConfig{
 				DeviceToken: device_id,
+				User:        user,
 			}
 			apnConfigs = append(apnConfigs, config)
 		}
@@ -300,15 +302,47 @@ func (n *Notifier) Send(o *Notification) {
 	}
 
 	for _, c := range o.Pref.WebPushConfigs {
-		n.SendWebPush(o.Messages, c)
+		res, err := n.SendWebPush(o.Messages, c)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+		} else if res.StatusCode >= 400 {
+			n.DeleteWebPushConfig(c)
+		}
 	}
 
 	for _, a := range o.Pref.APNConfigs {
-		n.SendAPNS(o.Messages, a)
+		err := n.SendAPNS(o.Messages, a)
+		if err != nil && err.Error() == "INVALID_TOKEN" {
+			n.DeleteAPNConfig(a)
+		}
 	}
 
 	n.Mu.Lock()
 	defer n.Mu.Unlock()
 
 	n.Last[o.User] = time.Now()
+}
+
+func (n *Notifier) DeleteWebPushConfig(c *WebPushConfig) {
+	db := n.DB()
+	_, err := db.Exec(`
+	  DELETE FROM web_push
+		WHERE "user"=$1 AND endpoint=$2
+	`, c.User, c.Endpoint)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting webpush: %s\n", err)
+	}
+}
+
+func (n *Notifier) DeleteAPNConfig(c *APNConfig) {
+	db := n.DB()
+	_, err := db.Exec(`
+	  DELETE FROM apn
+		WHERE "user"=$1 AND device_id=$2
+	`, c.User, c.DeviceToken)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting apn: %s\n", err)
+	}
 }

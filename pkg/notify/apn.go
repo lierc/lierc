@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"errors"
 	"fmt"
 	"github.com/Coccodrillo/apns"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 
 type APNConfig struct {
 	DeviceToken string
+	User        string
 }
 
 type APNPayload struct {
@@ -22,7 +24,7 @@ type APNAlert struct {
 	Action string `json:"action"`
 }
 
-func (n *Notifier) SendAPNS(m []*LoggedMessage, c *APNConfig) {
+func (n *Notifier) SendAPNS(m []*LoggedMessage, c *APNConfig) error {
 	cert := os.Getenv("APN_CERT_FILE")
 	key := os.Getenv("APN_KEY_FILE")
 	message := m[0]
@@ -47,9 +49,13 @@ func (n *Notifier) SendAPNS(m []*LoggedMessage, c *APNConfig) {
 	pn.Set("aps", payload)
 
 	resp := client.Send(pn)
-	alert, _ := pn.PayloadString()
 
-	fmt.Fprintf(os.Stderr, "Alert: %s\n", alert)
-	fmt.Fprintf(os.Stderr, "Success: %s\n", resp.Success)
-	fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
+	if !resp.Success {
+		if resp.Error != nil {
+			return resp.Error
+		}
+		return errors.New("Unknown error")
+	}
+
+	return nil
 }

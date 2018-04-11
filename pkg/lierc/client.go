@@ -166,7 +166,7 @@ func (c *IRCClient) Send(line string) {
 	if c.debug > 1 {
 		log.Printf("%s ---> %s", c.Id, line)
 	}
-	if c.Connected {
+	if c.irc.Connected {
 		c.irc.outgoing <- line
 	}
 }

@@ -27,6 +27,8 @@ type IRCConn struct {
 	keepalive time.Duration
 	lastmsg   time.Time
 	limiter   *rate.Limiter
+	errored   bool
+	Connected bool
 }
 
 func (c *IRCConn) Connect(server string, ssl bool) error {
@@ -50,6 +52,7 @@ func (c *IRCConn) Connect(server string, ssl bool) error {
 		if c.debug > 0 {
 			log.Printf("%s connection failed: %v", c.id, err)
 		}
+		c.Connected = false
 		c.status <- &IRCClientStatus{
 			Connected: false,
 			Message:   err.Error(),
@@ -64,6 +67,7 @@ func (c *IRCConn) Connect(server string, ssl bool) error {
 		log.Printf("%s Connected to %s", c.id, server)
 	}
 
+	c.Connected = true
 	c.status <- &IRCClientStatus{
 		Connected: true,
 		Message:   "Connected",
@@ -131,11 +135,15 @@ func (c *IRCConn) Send() {
 }
 
 func (c *IRCConn) Error(err error) {
-	close(c.end)
-	c.Close()
-	c.status <- &IRCClientStatus{
-		Connected: false,
-		Message:   err.Error(),
+	if !c.errored {
+		c.errored = true
+		c.Connected = false
+		c.Close()
+		c.status <- &IRCClientStatus{
+			Connected: false,
+			Message:   err.Error(),
+		}
+		close(c.end)
 	}
 }
 

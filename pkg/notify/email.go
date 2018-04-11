@@ -44,7 +44,7 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 		"MIME-Version: 1.0\n" +
 		"Content-Type: text/plain; charset=\"utf-8\"\n" +
 		"Content-Transfer-Encoding: 8bit\n" +
-		"X-Mailer: LeeMail 1.0\n" +
+		"X-Mailer: relaychat 0.1\n" +
 		"\r\n" +
 		"You were mentioned in the following channels:\n\n" +
 		strings.Join(lines, "\n\n") + "\n\n" +

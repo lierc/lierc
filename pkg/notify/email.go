@@ -22,7 +22,7 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 		var channel string
 
 		if m.Message.Direct {
-			channel = "direct"
+			channel = m.Message.Prefix.Name
 		} else {
 			channel = m.Message.Params[0]
 		}

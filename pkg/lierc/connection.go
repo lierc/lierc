@@ -40,9 +40,7 @@ func (c *IRCConn) Connect(server string, ssl bool) error {
 	var err error
 
 	if ssl {
-		conf := &tls.Config{
-			InsecureSkipVerify: true,
-		}
+		conf := &tls.Config{}
 		conn, err = tls.Dial("tcp", server, conf)
 	} else {
 		conn, err = net.Dial("tcp", server)

@@ -52,8 +52,7 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 		"Thank you for using relaychat.party!" +
 		"\r\n")
 
-	auth := smtp.PlainAuth("", "", "", "127.0.0.1")
-	err := smtp.SendMail("127.0.0.1:25", auth, "no-reply@relaychat.party", []string{emailAddress}, msg)
+	err := smtp.SendMail("127.0.0.1:25", nil, "no-reply@relaychat.party", []string{emailAddress}, msg)
 
 	if err != nil {
 		panic(err)

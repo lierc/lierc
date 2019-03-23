@@ -39,7 +39,7 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 
 	msg := []byte(fmt.Sprintf("To: %s\r\n", emailAddress) +
 		fmt.Sprintf(
-			"From: Relaychat Party <no-reply@relaychat.party>\n"+
+			"From: Relaychat Party <notifications@relaychat.party>\n"+
 				"Subject: %s\n", subject) +
 		"MIME-Version: 1.0\n" +
 		"Content-Type: text/plain; charset=\"utf-8\"\n" +
@@ -52,7 +52,7 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 		"Thank you for using relaychat.party!" +
 		"\r\n")
 
-	err := smtp.SendMail("127.0.0.1:25", nil, "no-reply@relaychat.party", []string{emailAddress}, msg)
+	err := smtp.SendMail("127.0.0.1:25", nil, "notifications@relaychat.party", []string{emailAddress}, msg)
 
 	if err != nil {
 		panic(err)

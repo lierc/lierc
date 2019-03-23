@@ -3,8 +3,6 @@ package webpush
 import (
 	"net/http"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 type testHTTPClient struct{}
@@ -34,24 +32,29 @@ func getStandardEncodedTestSubscription() *Subscription {
 }
 
 func TestSendNotificationToURLEncodedSubscription(t *testing.T) {
-	assert := assert.New(t)
-
 	resp, err := SendNotification([]byte("Test"), getURLEncodedTestSubscription(), &Options{
 		HTTPClient:      &testHTTPClient{},
 		Subscriber:      "mailto:<EMAIL@EXAMPLE.COM>",
 		Topic:           "test_topic",
 		TTL:             0,
 		Urgency:         "low",
-		VAPIDPrivateKey: "testKey",
+		VAPIDPublicKey:  "test-public",
+		VAPIDPrivateKey: "test-private",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	assert.Nil(err)
-	assert.Equal(201, resp.StatusCode)
+	if resp.StatusCode != 201 {
+		t.Fatalf(
+			"Incorreect status code, expected=%d, got=%d",
+			resp.StatusCode,
+			201,
+		)
+	}
 }
 
 func TestSendNotificationToStandardEncodedSubscription(t *testing.T) {
-	assert := assert.New(t)
-
 	resp, err := SendNotification([]byte("Test"), getStandardEncodedTestSubscription(), &Options{
 		HTTPClient:      &testHTTPClient{},
 		Subscriber:      "mailto:<EMAIL@EXAMPLE.COM>",
@@ -60,7 +63,15 @@ func TestSendNotificationToStandardEncodedSubscription(t *testing.T) {
 		Urgency:         "low",
 		VAPIDPrivateKey: "testKey",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	assert.Nil(err)
-	assert.Equal(201, resp.StatusCode)
+	if resp.StatusCode != 201 {
+		t.Fatalf(
+			"Incorreect status code, expected=%d, got=%d",
+			resp.StatusCode,
+			201,
+		)
+	}
 }

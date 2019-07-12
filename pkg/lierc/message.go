@@ -45,7 +45,9 @@ func ParseIRCMessage(line string) (error, *IRCMessage) {
 		if len(y) == 2 {
 			z := strings.SplitN(y[1], "@", 2)
 			m.Prefix.User = z[0]
-			m.Prefix.Server = z[1]
+			if len(z) == 2 {
+				m.Prefix.Server = z[1]
+			}
 		}
 
 		line = x[1]

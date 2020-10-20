@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	webpush "github.com/sherclockholmes/webpush-go"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
+
+	webpush "github.com/SherClockHolmes/webpush-go"
 )
 
 type WebPushConfig struct {

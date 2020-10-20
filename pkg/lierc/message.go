@@ -38,19 +38,22 @@ func ParseIRCMessage(line string) (error, *IRCMessage) {
 	}
 
 	if line[0] == ':' {
-		x := strings.SplitN(line[1:], " ", 2)
-		y := strings.SplitN(x[0], "!", 2)
-		m.Prefix.Name = y[0]
+		parts := strings.SplitN(line[1:], " ", 2)
+		from := parts[0]
+		bangPos := strings.LastIndex(from, "!")
 
-		if len(y) == 2 {
-			z := strings.SplitN(y[1], "@", 2)
-			m.Prefix.User = z[0]
-			if len(z) == 2 {
-				m.Prefix.Server = z[1]
+		if bangPos != -1 {
+			m.Prefix.Name = from[0:bangPos]
+			rest := strings.SplitN(from[bangPos:], "@", 2)
+			m.Prefix.User = rest[0]
+			if len(rest) == 2 {
+				m.Prefix.Server = rest[1]
 			}
+		} else {
+			m.Prefix.Name = from
 		}
 
-		line = x[1]
+		line = parts[1]
 	}
 
 	if strings.Index(line, " :") != -1 {

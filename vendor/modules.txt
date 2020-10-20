@@ -1,0 +1,36 @@
+# github.com/Coccodrillo/apns v0.0.0-20151129191123-91763352f7bf
+## explicit
+github.com/Coccodrillo/apns
+# github.com/SherClockHolmes/webpush-go v1.0.1
+## explicit
+github.com/SherClockHolmes/webpush-go
+# github.com/davecgh/go-spew v1.1.1
+## explicit
+github.com/davecgh/go-spew/spew
+# github.com/dgrijalva/jwt-go v3.2.0+incompatible
+github.com/dgrijalva/jwt-go
+# github.com/golang/snappy v0.0.1
+## explicit
+github.com/golang/snappy
+# github.com/lib/pq v1.0.0
+## explicit
+github.com/lib/pq
+github.com/lib/pq/oid
+# github.com/nsqio/go-nsq v1.0.7
+## explicit
+github.com/nsqio/go-nsq
+# github.com/pmezard/go-difflib v1.0.0
+github.com/pmezard/go-difflib/difflib
+# github.com/stretchr/objx v0.1.1
+## explicit
+github.com/stretchr/objx
+# github.com/stretchr/testify v1.3.0
+## explicit
+github.com/stretchr/testify/assert
+github.com/stretchr/testify/mock
+# golang.org/x/crypto v0.0.0-20190320223903-b7391e95e576
+## explicit
+golang.org/x/crypto/hkdf
+# golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
+## explicit
+golang.org/x/time/rate

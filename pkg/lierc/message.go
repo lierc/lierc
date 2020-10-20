@@ -44,10 +44,12 @@ func ParseIRCMessage(line string) (error, *IRCMessage) {
 
 		if bangPos != -1 {
 			m.Prefix.Name = from[0:bangPos]
-			rest := strings.SplitN(from[bangPos:], "@", 2)
-			m.Prefix.User = rest[0]
-			if len(rest) == 2 {
-				m.Prefix.Server = rest[1]
+			if len(from) > bangPos {
+				rest := strings.SplitN(from[bangPos+1:], "@", 2)
+				m.Prefix.User = rest[0]
+				if len(rest) == 2 {
+					m.Prefix.Server = rest[1]
+				}
 			}
 		} else {
 			m.Prefix.Name = from

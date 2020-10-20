@@ -12,6 +12,12 @@ func TestParseIRCMessage(t *testing.T) {
 			"server": "blolol.irc",
 			"user":   "aaron",
 		},
+		{
+			"line":   ":lee!leedo@blolol.irc fart lol",
+			"name":   "lee",
+			"server": "blolol.irc",
+			"user":   "leedo",
+		},
 	}
 
 	for _, test := range tests {

@@ -37,6 +37,12 @@ func init() {
 		c.Welcome()
 	}
 
+	handlers["421"] = func(c *IRCClient, m *IRCMessage) {
+		if strings.HasPrefix(m.Command, "CAP LS") {
+			c.CapNotSupported()
+		}
+	}
+
 	handlers["422"] = func(c *IRCClient, m *IRCMessage) {
 		c.Welcome()
 	}
@@ -229,11 +235,20 @@ func init() {
 
 		switch m.Params[1] {
 		case "LS":
-			c.CapList(strings.Split(m.Params[2], " "))
+			if m.Params[2] == "*" {
+				c.CapAdd(strings.Split(m.Params[3], " "))
+			} else {
+				c.CapAdd(strings.Split(m.Params[2], " "))
+				c.CapListDone()
+			}
 		case "ACK":
 			c.CapAck(strings.Split(m.Params[2], " "))
 		case "NAK":
 			c.CapNak(strings.Split(m.Params[2], " "))
+		case "NEW":
+			c.CapAdd(strings.Split(m.Params[3], " "))
+		case "DEL":
+			c.CapDel(strings.Split(m.Params[3], " "))
 		}
 	}
 

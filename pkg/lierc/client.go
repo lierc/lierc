@@ -208,7 +208,7 @@ func (c *IRCClient) Event() {
 			Status <- c.Status()
 
 			if c.Connected {
-				c.CapStart()
+				c.Register()
 			} else if !c.quitting {
 				c.Reconnect()
 			} else {
@@ -292,22 +292,15 @@ func (c *IRCClient) Welcome() {
 	}
 }
 
-func (c *IRCClient) MaybeRegister() {
-	if !c.Registered {
-		c.Register()
-	}
-}
-
 func (c *IRCClient) Register() {
-	if !c.Config.SASL && c.Config.Pass != "" {
-		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
-	}
+	c.CapStart()
 
 	user := c.Config.User
 	if user == "" {
 		user = c.Config.Nick
 	}
 
+	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
 	c.Send(fmt.Sprintf(
 		"USER %s %s %s %s",
 		user,
@@ -316,14 +309,14 @@ func (c *IRCClient) Register() {
 		user,
 	))
 
-	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
+	if !c.Config.SASL && c.Config.Pass != "" {
+		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
+	}
 }
 
 func (c *IRCClient) CapNotSupported() {
 	if c.Config.SASL {
 		c.irc.Close()
-	} else {
-		c.MaybeRegister()
 	}
 }
 
@@ -362,7 +355,6 @@ func (c *IRCClient) CapListDone() {
 		c.Send("CAP REQ :" + strings.Join(capReq, " "))
 	} else {
 		c.Send("CAP END")
-		c.MaybeRegister()
 	}
 }
 
@@ -393,13 +385,11 @@ func (c *IRCClient) CapAck(caps []string) {
 		}
 	} else {
 		c.Send("CAP END")
-		c.MaybeRegister()
 	}
 }
 
 func (c *IRCClient) SASLAuthSuccess() {
 	c.Send("CAP END")
-	c.MaybeRegister()
 }
 
 func (c *IRCClient) SASLAuthFailed(s string) {

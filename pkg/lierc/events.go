@@ -236,7 +236,9 @@ func init() {
 		switch m.Params[1] {
 		case "LS":
 			if m.Params[2] == "*" {
-				c.CapAdd(strings.Split(m.Params[3], " "))
+				if len(m.Params) > 2 {
+					c.CapAdd(strings.Split(m.Params[3], " "))
+				}
 			} else {
 				c.CapAdd(strings.Split(m.Params[2], " "))
 				c.CapListDone()

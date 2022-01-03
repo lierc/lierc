@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lierc/lierc/pkg/lierc"
 	"io"
 	"io/ioutil"
 	"log"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lierc/lierc/pkg/lierc"
 )
 
 var Privmsg = make(chan *ClientPrivmsg)
@@ -232,7 +233,7 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		line := string(raw)
 		c.Send(line)
 
-		if len(line) >= 0 && (strings.ToUpper(line[:7]) == "PRIVMSG" || strings.ToUpper(line[:6]) == "NOTICE") {
+		if len(line) >= 0 && (strings.ToUpper(line[:7]) == "PRIVMSG" || strings.ToUpper(line[:6]) == "NOTICE") && !c.CapEnabled("echo-message") {
 			event := m.PrivmsgEvent(c, line)
 			event.Message.Prefix.Self = true
 			lierc.Events <- event

@@ -346,8 +346,12 @@ func (c *IRCClient) CapListDone() {
 		}
 	}
 
-	if c.CapAvailable("msg-id") {
-		capReq = append(capReq, "msg-id")
+	if c.CapAvailable("message-tags") {
+		capReq = append(capReq, "message-tags")
+	}
+
+	if c.CapAvailable("echo-message") {
+		capReq = append(capReq, "echo-message")
 	}
 
 	if len(capReq) > 0 {
@@ -474,6 +478,8 @@ type IRCClientData struct {
 	Registered bool
 	Status     *IRCClientStatus
 	Isupport   []string
+	Caps       map[string]string
+	CapsAcked  []string
 }
 
 type IRCChannelData struct {
@@ -504,5 +510,15 @@ func (c *IRCClient) ClientData() *IRCClientData {
 		Registered: c.Registered,
 		Status:     c.Status(),
 		Isupport:   c.Isupport,
+		Caps:       c.Caps,
+		CapsAcked:  c.capsAcked(),
 	}
+}
+
+func (c *IRCClient) capsAcked() []string {
+	var caps []string
+	for k, _ := range c.CapsAcked {
+		caps = append(caps, k)
+	}
+	return caps
 }

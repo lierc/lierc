@@ -201,6 +201,7 @@ func init() {
 
 	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage) {
 		m.Direct = m.Params[0] == c.Nick
+		m.Prefix.Self = m.Prefix.User == c.User && m.Prefix.Name == c.Nick
 		text := m.Params[1]
 		if len(text) >= 7 && text[0:7] == "\x01VERSION" {
 			log.Printf("%v", m)

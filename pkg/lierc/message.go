@@ -15,6 +15,7 @@ type IRCPrefix struct {
 
 type IRCMessage struct {
 	Prefix  *IRCPrefix
+	Tags    map[string]string
 	Command string
 	Raw     string
 	Time    float64
@@ -32,11 +33,32 @@ func ParseIRCMessage(line string) (error, *IRCMessage) {
 
 	m := IRCMessage{
 		Raw:    raw,
+		Tags:   make(map[string]string),
 		Prefix: &IRCPrefix{Self: false},
 		Direct: false,
 		Time:   now,
 	}
 
+	// looks like it starts with tags
+	if line[0] == '@' {
+		parts := strings.SplitN(line[1:], " ", 2)
+
+		if len(parts) > 1 {
+			tags := strings.Split(parts[0], ";")
+			for _, tag := range tags {
+				kv := strings.SplitN(tag, "=", 2)
+				if len(kv) == 2 {
+					m.Tags[kv[0]] = kv[1]
+				} else {
+					m.Tags[tag] = ""
+				}
+			}
+
+			line = parts[1]
+		}
+	}
+
+	// parse message prefix
 	if line[0] == ':' {
 		parts := strings.SplitN(line[1:], " ", 2)
 		from := parts[0]

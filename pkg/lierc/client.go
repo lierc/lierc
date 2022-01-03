@@ -300,6 +300,10 @@ func (c *IRCClient) Register() {
 		user = c.Config.Nick
 	}
 
+	if !c.Config.SASL && c.Config.Pass != "" {
+		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
+	}
+
 	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
 	c.Send(fmt.Sprintf(
 		"USER %s %s %s %s",
@@ -308,10 +312,6 @@ func (c *IRCClient) Register() {
 		c.Config.Host,
 		user,
 	))
-
-	if !c.Config.SASL && c.Config.Pass != "" {
-		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
-	}
 }
 
 func (c *IRCClient) CapNotSupported() {

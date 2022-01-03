@@ -20,6 +20,16 @@ var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
 var Status = make(chan *IRCClientStatus)
 
+const (
+	CAP_ECHO_MESSAGE = "echo-message"
+	CAP_MESSAGE_TAGS = "message-tags"
+	CAP_SASL         = "sasl"
+)
+
+func getSupportedCaps() []string {
+	return []string{CAP_ECHO_MESSAGE, CAP_MESSAGE_TAGS, CAP_SASL}
+}
+
 type IRCClient struct {
 	sync.RWMutex
 	Id            string
@@ -337,21 +347,15 @@ func (c *IRCClient) CapDel(caps []string) {
 func (c *IRCClient) CapListDone() {
 	var capReq []string
 
-	if c.Config.SASL {
-		if c.CapAvailable("sasl") {
-			capReq = append(capReq, "sasl")
-		} else {
-			c.irc.Close()
-			return
+	if c.Config.SASL && !c.CapAvailable(CAP_SASL) {
+		c.irc.Close()
+		return
+	}
+
+	for _, cp := range getSupportedCaps() {
+		if c.CapAvailable(cp) {
+			capReq = append(capReq, cp)
 		}
-	}
-
-	if c.CapAvailable("message-tags") {
-		capReq = append(capReq, "message-tags")
-	}
-
-	if c.CapAvailable("echo-message") {
-		capReq = append(capReq, "echo-message")
 	}
 
 	if len(capReq) > 0 {
@@ -382,7 +386,7 @@ func (c *IRCClient) CapAck(caps []string) {
 	}
 
 	if !c.Registered && c.Config.SASL {
-		if c.CapEnabled("sasl") {
+		if c.CapEnabled(CAP_SASL) {
 			c.Send("AUTHENTICATE PLAIN")
 		} else {
 			c.irc.Close()
@@ -429,7 +433,7 @@ func (c *IRCClient) CapNak(caps []string) {
 	}
 
 	if !c.Registered && c.Config.SASL {
-		if !c.CapEnabled("sasl") {
+		if !c.CapEnabled(CAP_SASL) {
 			c.irc.Close()
 		}
 	}

@@ -22,7 +22,7 @@ func TestParseIRCMessage(t *testing.T) {
 			"line":   "@msgid=yzvb3a8gvqwab7nerk8v4r8wji :leedo!~lee@d4e8yxp8tyq56.aesthetes.chat JOIN #fart",
 			"name":   "leedo",
 			"server": "d4e8yxp8tyq56.aesthetes.chat",
-			"user":   "lee",
+			"user":   "~lee",
 			"msgid":  "yzvb3a8gvqwab7nerk8v4r8wji",
 		},
 	}
@@ -45,8 +45,8 @@ func TestParseIRCMessage(t *testing.T) {
 		if msg.Prefix.User != test["user"] {
 			t.Errorf("name %q != %q", msg.Prefix.User, test["user"])
 		}
-		if test["msgid"] != "" && msg.MsgID != test["msgid"] {
-			t.Errorf("message id %q != %q", msg.MsgID, test["msgid"])
+		if test["msgid"] != "" && msg.Tags["msgid"] != test["msgid"] {
+			t.Errorf("message id %q != %q", msg.Tags["msgid"], test["msgid"])
 		}
 	}
 }

@@ -319,7 +319,7 @@ func (c *IRCClient) CapNotSupported() {
 
 func (c *IRCClient) CapAdd(caps []string) {
 	for _, v := range caps {
-		parts := strings.SplitN(v, "=", 1)
+		parts := strings.SplitN(v, "=", 2)
 		if len(parts) == 2 {
 			c.Caps[parts[0]] = parts[1]
 		} else {
@@ -338,14 +338,15 @@ func (c *IRCClient) CapListDone() {
 	var capReq []string
 
 	if c.Config.SASL {
-		if c.CapEnabled("sasl") {
+		if c.CapAvailable("sasl") {
 			capReq = append(capReq, "sasl")
 		} else {
 			c.irc.Close()
+			return
 		}
 	}
 
-	if c.CapEnabled("msg-id") {
+	if c.CapAvailable("msg-id") {
 		capReq = append(capReq, "msg-id")
 	}
 
@@ -355,6 +356,11 @@ func (c *IRCClient) CapListDone() {
 		c.Send("CAP END")
 		c.MaybeRegister()
 	}
+}
+
+func (c *IRCClient) CapAvailable(name string) bool {
+	_, ok := c.Caps[name]
+	return ok
 }
 
 func (c *IRCClient) CapEnabled(name string) bool {

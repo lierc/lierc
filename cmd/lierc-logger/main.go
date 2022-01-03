@@ -4,14 +4,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/lib/pq"
-	"github.com/lierc/lierc/pkg/lierc"
-	"github.com/nsqio/go-nsq"
+	"log"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lib/pq"
+	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/nsqio/go-nsq"
 )
 
 type Highlighters struct {
@@ -235,7 +237,7 @@ func insertMessage(db *sql.DB, client_id string, m *lierc.IRCMessage, channel st
 
 	var i int
 
-	insert_err := db.QueryRow(
+	err = db.QueryRow(
 		"INSERT INTO log (\"user\", connection, channel, command, message, time, self, highlight) SELECT connection.\"user\",connection.id,$2,$3,$4,to_timestamp($5),$6,$7 FROM connection WHERE connection.id=$1 RETURNING id",
 		client_id,
 		strings.ToLower(channel),
@@ -246,8 +248,12 @@ func insertMessage(db *sql.DB, client_id string, m *lierc.IRCMessage, channel st
 		highlight,
 	).Scan(&i)
 
-	if insert_err != nil {
-		panic(insert_err)
+	switch {
+	case err == sql.ErrNoRows:
+		log.Printf("got message for missing connection %q: %v\n%s", client_id, err, m.Raw)
+	case err != nil:
+		log.Printf("failed to insert message for client %q: %v\n%s", client_id, err, m.Raw)
+		panic(err)
 	}
 
 	return i

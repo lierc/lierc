@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"golang.org/x/time/rate"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 var hostname, _ = os.Hostname()
@@ -17,6 +19,16 @@ var hostname, _ = os.Hostname()
 var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
 var Status = make(chan *IRCClientStatus)
+
+const (
+	CAP_ECHO_MESSAGE = "echo-message"
+	CAP_MESSAGE_TAGS = "message-tags"
+	CAP_SASL         = "sasl"
+)
+
+func getSupportedCaps() []string {
+	return []string{CAP_ECHO_MESSAGE, CAP_MESSAGE_TAGS, CAP_SASL}
+}
 
 type IRCClient struct {
 	sync.RWMutex
@@ -27,7 +39,8 @@ type IRCClient struct {
 	User          string
 	Host          string
 	Registered    bool
-	Caps          map[string]bool
+	Caps          map[string]string
+	CapsAcked     map[string]struct{}
 	Connected     bool
 	StatusMessage string
 	Isupport      []string
@@ -84,7 +97,8 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		Isupport:      make([]string, 0),
 		Channels:      make(map[string]*IRCChannel),
 		Connected:     false,
-		Caps:          make(map[string]bool),
+		Caps:          make(map[string]string),
+		CapsAcked:     make(map[string]struct{}),
 		StatusMessage: "Connecting",
 		status:        status,
 		incoming:      incoming,
@@ -194,11 +208,7 @@ func (c *IRCClient) Event() {
 			Status <- c.Status()
 
 			if c.Connected {
-				if c.Config.SASL {
-					c.SASLStart()
-				} else {
-					c.Register()
-				}
+				c.Register()
 			} else if !c.quitting {
 				c.Reconnect()
 			} else {
@@ -283,15 +293,18 @@ func (c *IRCClient) Welcome() {
 }
 
 func (c *IRCClient) Register() {
-	if !c.Config.SASL && c.Config.Pass != "" {
-		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
-	}
+	c.CapStart()
 
 	user := c.Config.User
 	if user == "" {
 		user = c.Config.Nick
 	}
 
+	if !c.Config.SASL && c.Config.Pass != "" {
+		c.Send(fmt.Sprintf("PASS %s", c.Config.Pass))
+	}
+
+	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
 	c.Send(fmt.Sprintf(
 		"USER %s %s %s %s",
 		user,
@@ -299,41 +312,92 @@ func (c *IRCClient) Register() {
 		c.Config.Host,
 		user,
 	))
-
-	c.Send(fmt.Sprintf("NICK %s", c.Config.Nick))
 }
 
-func (c *IRCClient) CapList(caps []string) {
-	for _, cp := range caps {
-		c.Caps[cp] = false
+func (c *IRCClient) CapNotSupported() {
+	if c.Config.SASL {
+		c.irc.Close()
 	}
+}
+
+func (c *IRCClient) CapAdd(caps []string) {
+	for _, v := range caps {
+		parts := strings.SplitN(v, "=", 2)
+		if len(parts) == 2 {
+			c.Caps[parts[0]] = parts[1]
+		} else {
+			c.Caps[v] = ""
+		}
+	}
+}
+
+func (c *IRCClient) CapDel(caps []string) {
+	for _, v := range caps {
+		delete(c.Caps, v)
+	}
+}
+
+func (c *IRCClient) CapListDone() {
+	var capReq []string
+
+	if c.Config.SASL && !c.CapAvailable(CAP_SASL) {
+		c.irc.Close()
+		return
+	}
+
+	for _, cp := range getSupportedCaps() {
+		if c.CapAvailable(cp) {
+			capReq = append(capReq, cp)
+		}
+	}
+
+	if len(capReq) > 0 {
+		c.Send("CAP REQ :" + strings.Join(capReq, " "))
+	} else {
+		c.Send("CAP END")
+	}
+}
+
+func (c *IRCClient) CapAvailable(name string) bool {
+	_, ok := c.Caps[name]
+	return ok
+}
+
+func (c *IRCClient) CapEnabled(name string) bool {
+	_, ok := c.CapsAcked[name]
+	return ok
 }
 
 func (c *IRCClient) CapAck(caps []string) {
-	for _, cp := range caps {
-		c.Caps[cp] = true
+	for _, v := range caps {
+		if strings.HasPrefix(v, "-") {
+			delete(c.CapsAcked, v[1:])
+		} else {
+			c.CapsAcked[v] = struct{}{}
+		}
 	}
 
 	if !c.Registered && c.Config.SASL {
-		if c.Caps["sasl"] {
+		if c.CapEnabled(CAP_SASL) {
 			c.Send("AUTHENTICATE PLAIN")
 		} else {
 			c.irc.Close()
 		}
+	} else {
+		c.Send("CAP END")
 	}
 }
 
 func (c *IRCClient) SASLAuthSuccess() {
 	c.Send("CAP END")
-	c.Register()
 }
 
 func (c *IRCClient) SASLAuthFailed(s string) {
 	c.irc.Close()
 }
 
-func (c *IRCClient) SASLStart() {
-	c.Send("CAP REQ :sasl")
+func (c *IRCClient) CapStart() {
+	c.Send("CAP LS 302")
 }
 
 func (c *IRCClient) SASLAuth(s string) {
@@ -355,11 +419,11 @@ func (c *IRCClient) SASLAuth(s string) {
 
 func (c *IRCClient) CapNak(caps []string) {
 	for _, cp := range caps {
-		c.Caps[cp] = false
+		delete(c.Caps, cp)
 	}
 
 	if !c.Registered && c.Config.SASL {
-		if !c.Caps["sasl"] {
+		if !c.CapEnabled(CAP_SASL) {
 			c.irc.Close()
 		}
 	}
@@ -408,6 +472,8 @@ type IRCClientData struct {
 	Registered bool
 	Status     *IRCClientStatus
 	Isupport   []string
+	Caps       map[string]string
+	CapsAcked  []string
 }
 
 type IRCChannelData struct {
@@ -438,5 +504,15 @@ func (c *IRCClient) ClientData() *IRCClientData {
 		Registered: c.Registered,
 		Status:     c.Status(),
 		Isupport:   c.Isupport,
+		Caps:       c.Caps,
+		CapsAcked:  c.capsAcked(),
 	}
+}
+
+func (c *IRCClient) capsAcked() []string {
+	var caps []string
+	for k, _ := range c.CapsAcked {
+		caps = append(caps, k)
+	}
+	return caps
 }

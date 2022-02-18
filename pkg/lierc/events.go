@@ -37,6 +37,12 @@ func init() {
 		c.Welcome()
 	}
 
+	handlers["421"] = func(c *IRCClient, m *IRCMessage) {
+		if strings.HasPrefix(m.Command, "CAP LS") {
+			c.CapNotSupported()
+		}
+	}
+
 	handlers["422"] = func(c *IRCClient, m *IRCMessage) {
 		c.Welcome()
 	}
@@ -195,6 +201,7 @@ func init() {
 
 	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage) {
 		m.Direct = m.Params[0] == c.Nick
+		m.Prefix.Self = m.Prefix.User == c.User && m.Prefix.Name == c.Nick
 		text := m.Params[1]
 		if len(text) >= 7 && text[0:7] == "\x01VERSION" {
 			log.Printf("%v", m)
@@ -229,11 +236,22 @@ func init() {
 
 		switch m.Params[1] {
 		case "LS":
-			c.CapList(strings.Split(m.Params[2], " "))
+			if m.Params[2] == "*" {
+				if len(m.Params) > 2 {
+					c.CapAdd(strings.Split(m.Params[3], " "))
+				}
+			} else {
+				c.CapAdd(strings.Split(m.Params[2], " "))
+				c.CapListDone()
+			}
 		case "ACK":
 			c.CapAck(strings.Split(m.Params[2], " "))
 		case "NAK":
 			c.CapNak(strings.Split(m.Params[2], " "))
+		case "NEW":
+			c.CapAdd(strings.Split(m.Params[3], " "))
+		case "DEL":
+			c.CapDel(strings.Split(m.Params[3], " "))
 		}
 	}
 

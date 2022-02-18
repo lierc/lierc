@@ -35,6 +35,7 @@ type LoggedMessage struct {
 var hostname, _ = os.Hostname()
 var loggable = map[string]string{
 	"PRIVMSG":    "#",
+	"TAGMSG":     "#",
 	"JOIN":       "#",
 	"PART":       "#",
 	"TOPIC":      "#",

@@ -249,9 +249,13 @@ func init() {
 		case "NAK":
 			c.CapNak(strings.Split(m.Params[2], " "))
 		case "NEW":
-			c.CapAdd(strings.Split(m.Params[3], " "))
+			if len(m.Params) > 2 {
+				c.CapAdd(strings.Split(m.Params[3], " "))
+			}
 		case "DEL":
-			c.CapDel(strings.Split(m.Params[3], " "))
+			if len(m.Params) > 2 {
+				c.CapDel(strings.Split(m.Params[3], " "))
+			}
 		}
 	}
 

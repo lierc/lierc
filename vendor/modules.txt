@@ -8,19 +8,21 @@ github.com/SherClockHolmes/webpush-go
 ## explicit
 github.com/davecgh/go-spew/spew
 # github.com/dgrijalva/jwt-go v3.2.0+incompatible
+## explicit
 github.com/dgrijalva/jwt-go
 # github.com/golang/snappy v0.0.4
 ## explicit
 github.com/golang/snappy
 # github.com/lib/pq v1.10.4
-## explicit
+## explicit; go 1.13
 github.com/lib/pq
 github.com/lib/pq/oid
 github.com/lib/pq/scram
 # github.com/nsqio/go-nsq v1.1.0
-## explicit
+## explicit; go 1.11
 github.com/nsqio/go-nsq
 # github.com/pmezard/go-difflib v1.0.0
+## explicit
 github.com/pmezard/go-difflib/difflib
 # github.com/stretchr/objx v0.1.1
 ## explicit

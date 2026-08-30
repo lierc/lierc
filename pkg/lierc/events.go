@@ -237,7 +237,7 @@ func init() {
 		switch m.Params[1] {
 		case "LS":
 			if m.Params[2] == "*" {
-				if len(m.Params) > 2 {
+				if len(m.Params) > 3 {
 					c.CapAdd(strings.Split(m.Params[3], " "))
 				}
 			} else {
@@ -249,11 +249,11 @@ func init() {
 		case "NAK":
 			c.CapNak(strings.Split(m.Params[2], " "))
 		case "NEW":
-			if len(m.Params) > 2 {
+			if len(m.Params) > 3 {
 				c.CapAdd(strings.Split(m.Params[3], " "))
 			}
 		case "DEL":
-			if len(m.Params) > 2 {
+			if len(m.Params) > 3 {
 				c.CapDel(strings.Split(m.Params[3], " "))
 			}
 		}

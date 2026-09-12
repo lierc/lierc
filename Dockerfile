@@ -13,3 +13,7 @@ FROM scratch
 
 COPY --from=builder /go/bin/lierc* /go/bin/
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+ENV PATH="/go/bin:${PATH}"
+
+CMD ["liercd"]

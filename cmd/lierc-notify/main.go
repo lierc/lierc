@@ -27,6 +27,10 @@ func main() {
 		Delay:           15 * time.Second,
 	}
 
+	if err := conf.SetSMTPOpts(os.Getenv("SMTP_OPTS")); err != nil {
+		panic(err)
+	}
+
 	notifier := &notify.Notifier{
 		Client:        &http.Client{},
 		Notifications: make(map[string]*notify.Notification),

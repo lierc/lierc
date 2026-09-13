@@ -34,6 +34,11 @@ type NotifierConfig struct {
 	APIURL          string
 	VAPIDPrivateKey string
 	NSQDHost        string
+	SMTPHost        string
+	SMTPPort        int
+	SMTPSSL         bool
+	SMTPAuthUser    string
+	SMTPAuthPass    string
 	Delay           time.Duration
 }
 

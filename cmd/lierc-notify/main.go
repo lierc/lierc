@@ -31,6 +31,10 @@ func main() {
 		panic(err)
 	}
 
+	if err := conf.SetUserRateLimit(os.Getenv("USER_RATE_LIMIT")); err != nil {
+		panic(err)
+	}
+
 	notifier := &notify.Notifier{
 		Client:        &http.Client{},
 		Notifications: make(map[string]*notify.Notification),

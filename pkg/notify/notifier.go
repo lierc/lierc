@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,6 +24,8 @@ type Notifier struct {
 	Config        *NotifierConfig
 	Queue         chan *LoggedMessage
 }
+
+const DefaultUserRateLimit = 10 * time.Minute
 
 type NotifierConfig struct {
 	DBUser          string
@@ -40,6 +43,33 @@ type NotifierConfig struct {
 	SMTPAuthUser    string
 	SMTPAuthPass    string
 	Delay           time.Duration
+	UserRateLimit   time.Duration
+}
+
+// SetUserRateLimit sets how long to wait before notifying the same user
+// again, from a duration string as found in the USER_RATE_LIMIT env var. For
+// example: 30s, 10m, 1h. An empty value falls back to 10m.
+func (c *NotifierConfig) SetUserRateLimit(limit string) error {
+	limit = strings.TrimSpace(limit)
+
+	if limit == "" {
+		c.UserRateLimit = DefaultUserRateLimit
+		return nil
+	}
+
+	d, err := time.ParseDuration(limit)
+
+	if err != nil {
+		return fmt.Errorf("invalid user rate limit %s: %s", limit, err)
+	}
+
+	if d < 0 {
+		return fmt.Errorf("user rate limit cannot be negative: %s", limit)
+	}
+
+	c.UserRateLimit = d
+
+	return nil
 }
 
 func (n *Notifier) ListenNSQ() {
@@ -262,9 +292,15 @@ func (n *Notifier) Accumulate() {
 }
 
 func (n *Notifier) UserRateLimit(user string) bool {
+	limit := n.Config.UserRateLimit
+
+	if limit == 0 {
+		limit = DefaultUserRateLimit
+	}
+
 	if ts, ok := n.Last[user]; ok {
 		now := time.Now()
-		if ts.Add(10 * time.Minute).After(now) {
+		if ts.Add(limit).After(now) {
 			return true
 		}
 	}

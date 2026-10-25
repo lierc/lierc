@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+#
+# Delete the typing notifications (TAGMSG without a reaction tag) that
+# lierc-logger stored in the log table before it stopped logging them.
+#
+# Works through the table in id ranges, so each DELETE is a short
+# transaction that uses the primary key instead of scanning the whole
+# table. Run it after deploying the logger fix, so no new ones appear.
+#
+# usage: delete-typing-log [--dry-run] [--batch IDS] [--sleep SECONDS] [--start ID]
+#
+#   --dry-run  only count what would be deleted
+#   --batch    ids per range (default 50000)
+#   --sleep    pause between ranges, to go easy on the database (default 0)
+#   --start    first id to look at, e.g. to resume an interrupted run
+#
+# Connects with psql using the same POSTGRES_HOST, POSTGRES_USER,
+# POSTGRES_PASSWORD and POSTGRES_DB variables as the logger, falling
+# back to the standard PG* variables (and ~/.pgpass) for any unset.
+
+set -euo pipefail
+
+batch=50000
+pause=0
+start=
+dry_run=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) dry_run=1 ;;
+    --batch) batch="$2"; shift ;;
+    --sleep) pause="$2"; shift ;;
+    --start) start="$2"; shift ;;
+    -h|--help) sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+if [ -n "${POSTGRES_HOST:-}" ]; then export PGHOST="$POSTGRES_HOST"; fi
+if [ -n "${POSTGRES_USER:-}" ]; then export PGUSER="$POSTGRES_USER"; fi
+if [ -n "${POSTGRES_PASSWORD:-}" ]; then export PGPASSWORD="$POSTGRES_PASSWORD"; fi
+if [ -n "${POSTGRES_DB:-}" ]; then export PGDATABASE="$POSTGRES_DB"; fi
+
+sql() {
+  psql -X -q -At -v ON_ERROR_STOP=1 -c "$1"
+}
+
+# must match what the logger now skips: TAGMSG that isn't a reaction
+typing="command = 'TAGMSG'
+  AND NOT (message->'Tags' ? '+draft/react' OR message->'Tags' ? '+draft/unreact')"
+
+# assigned first so a failed query stops the script (set -e)
+bounds=$(sql "SELECT min(id), max(id) FROM log")
+IFS='|' read -r min max <<< "$bounds"
+if [ -z "$max" ]; then
+  echo "log is empty"
+  exit 0
+fi
+
+lo="${start:-$min}"
+total=0
+
+echo "$([ "$dry_run" = 1 ] && echo "counting" || echo "deleting") typing notifications in ids $lo..$max, $batch at a time"
+
+while [ "$lo" -le "$max" ]; do
+  hi=$((lo + batch))
+  range="id >= $lo AND id < $hi AND $typing"
+
+  if [ "$dry_run" = 1 ]; then
+    n=$(sql "SELECT count(*) FROM log WHERE $range")
+  else
+    n=$(sql "WITH deleted AS (DELETE FROM log WHERE $range RETURNING 1) SELECT count(*) FROM deleted")
+  fi
+
+  total=$((total + n))
+  echo "ids $lo..$((hi - 1)): $n (total $total)"
+
+  lo=$hi
+  if [ "$pause" != 0 ] && [ "$lo" -le "$max" ]; then
+    sleep "$pause"
+  fi
+done
+
+echo "$([ "$dry_run" = 1 ] && echo "would delete" || echo "deleted") $total rows"

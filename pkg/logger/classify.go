@@ -4,66 +4,93 @@ import (
 	"github.com/lierc/lierc/pkg/lierc"
 )
 
-// How each command from the chats topic is logged: "#" under the
-// channel (or nick) it was sent to, "status" under the connection's
-// status panel, "skip" not at all (these arrive on the multi topic
-// instead). Anything not listed is passed through without logging.
-var loggable = map[string]string{
-	"PRIVMSG":    "#",
-	"TAGMSG":     "#",
-	"JOIN":       "#",
-	"PART":       "#",
-	"TOPIC":      "#",
-	"MODE":       "#",
-	"NICK":       "skip",
-	"QUIT":       "skip",
-	"ERROR":      "status",
-	"CONNECT":    "status",
-	"DISCONNECT": "status",
-	"001":        "status",
-	"002":        "status",
-	"003":        "status",
-	"004":        "status",
-	"005":        "status",
-	"251":        "status",
-	"252":        "status",
-	"253":        "status",
-	"254":        "status",
-	"255":        "status",
-	"265":        "status",
-	"266":        "status",
-	"250":        "status",
-	"375":        "status",
-	"372":        "status",
-	"376":        "status",
+// logKind is how a message from the chats topic is handled.
+type logKind int
+
+const (
+	// publish it live, but don't store it
+	logPass logKind = iota
+	// drop it entirely (NICK and QUIT arrive on the multi topic instead)
+	logSkip
+	// store it under the channel, or nick, it was sent to
+	logTarget
+	// store it under the connection's status panel
+	logStatus
+)
+
+// for test failures and logging
+func (k logKind) String() string {
+	switch k {
+	case logPass:
+		return "pass"
+	case logSkip:
+		return "skip"
+	case logTarget:
+		return "target"
+	case logStatus:
+		return "status"
+	}
+	return "unknown"
 }
 
-func logType(m *lierc.IRCMessage) string {
+// the channel name status messages are stored under
+const statusChannel = "status"
+
+// How each command is logged. Anything not listed, apart from the
+// NOTICE and numeric rules in logType, is passed through.
+var loggable = map[string]logKind{
+	"PRIVMSG":    logTarget,
+	"TAGMSG":     logTarget,
+	"JOIN":       logTarget,
+	"PART":       logTarget,
+	"TOPIC":      logTarget,
+	"MODE":       logTarget,
+	"NICK":       logSkip,
+	"QUIT":       logSkip,
+	"ERROR":      logStatus,
+	"CONNECT":    logStatus,
+	"DISCONNECT": logStatus,
+	"001":        logStatus,
+	"002":        logStatus,
+	"003":        logStatus,
+	"004":        logStatus,
+	"005":        logStatus,
+	"251":        logStatus,
+	"252":        logStatus,
+	"253":        logStatus,
+	"254":        logStatus,
+	"255":        logStatus,
+	"265":        logStatus,
+	"266":        logStatus,
+	"250":        logStatus,
+	"375":        logStatus,
+	"372":        logStatus,
+	"376":        logStatus,
+}
+
+func logType(m *lierc.IRCMessage) logKind {
 	// TAGMSG also carries typing notifications, which are only
 	// useful live; reactions are the only ones worth keeping
 	if m.Command == "TAGMSG" && !isReaction(m) {
-		return "pass"
+		return logPass
 	}
 
-	t, ok := loggable[m.Command]
-
-	if ok {
-		return t
+	if kind, ok := loggable[m.Command]; ok {
+		return kind
 	}
 
 	if m.Command == "NOTICE" {
 		if m.Direct {
-			return "#"
-		} else {
-			return "status"
+			return logTarget
 		}
+		return logStatus
 	}
 
 	if m.Command[0] == '4' || m.Command[0] == '5' || m.Command[0] == '9' {
-		return "status"
+		return logStatus
 	}
 
-	return "pass"
+	return logPass
 }
 
 func isReaction(m *lierc.IRCMessage) bool {
@@ -72,20 +99,9 @@ func isReaction(m *lierc.IRCMessage) bool {
 	return react || unreact
 }
 
-type action int
-
-const (
-	// drop the message entirely
-	actionSkip action = iota
-	// publish it live, but don't store it
-	actionPass
-	// store it, then publish it with its id
-	actionStore
-)
-
 // route is what to do with a message from the chats topic.
 type route struct {
-	action action
+	kind logKind
 	// the channel to store it under (lowercased when stored)
 	channel string
 	// it's a private message from someone else, so the conversation
@@ -94,17 +110,15 @@ type route struct {
 }
 
 func routeChat(m *lierc.IRCMessage) route {
-	switch t := logType(m); t {
-	case "pass":
-		return route{action: actionPass}
-	case "skip":
-		return route{action: actionSkip}
-	case "#":
+	switch kind := logType(m); kind {
+	case logTarget:
 		if m.Direct && !m.Prefix.Self {
-			return route{action: actionStore, channel: m.Prefix.Name, private: true}
+			return route{kind: kind, channel: m.Prefix.Name, private: true}
 		}
-		return route{action: actionStore, channel: m.Params[0]}
+		return route{kind: kind, channel: m.Params[0]}
+	case logStatus:
+		return route{kind: kind, channel: statusChannel}
 	default:
-		return route{action: actionStore, channel: t}
+		return route{kind: kind}
 	}
 }

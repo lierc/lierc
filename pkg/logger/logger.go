@@ -186,10 +186,10 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 	ctx := context.Background()
 	route := routeChat(m.Message)
 
-	switch route.action {
-	case actionSkip:
+	switch route.kind {
+	case logSkip:
 		return nil
-	case actionPass:
+	case logPass:
 		l.publish(&LoggedMessage{Message: m.Message, ConnectionId: m.Id})
 		return nil
 	}

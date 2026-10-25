@@ -29,6 +29,10 @@ func main() {
 	defer stop()
 
 	if err := l.Start(ctx); err != nil {
+		if ctx.Err() != nil {
+			log.Print("stopped while starting")
+			return
+		}
 		log.Fatal(err)
 	}
 

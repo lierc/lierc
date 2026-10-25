@@ -86,13 +86,17 @@ func New(config *Config) (*Logger, error) {
 }
 
 // Start loads highlights, starts listening for changes to them, and
-// starts consuming the chats and multi topics.
+// starts consuming the chats and multi topics. It waits for postgres
+// and nsqd to be reachable, so it can start before they do.
 func (l *Logger) Start(ctx context.Context) error {
-	if err := l.db.PingContext(ctx); err != nil {
-		return fmt.Errorf("connecting to postgres: %w", err)
+	err := retry(ctx, "connecting to postgres", func() error {
+		return l.db.PingContext(ctx)
+	})
+	if err != nil {
+		return err
 	}
-	if err := l.producer.Ping(); err != nil {
-		return fmt.Errorf("connecting to nsqd: %w", err)
+	if err := retry(ctx, "connecting to nsqd", l.producer.Ping); err != nil {
+		return err
 	}
 
 	l.reloadHighlights(ctx)
@@ -104,18 +108,53 @@ func (l *Logger) Start(ctx context.Context) error {
 		"chats": l.handleChat,
 		"multi": l.handleMulti,
 	} {
-		consumer, err := nsq.NewConsumer(topic, "logger", nsq.NewConfig())
+		consumer, err := nsq.NewConsumer(topic, "logger", consumerConfig())
 		if err != nil {
 			return err
 		}
 		consumer.AddHandler(handler)
-		if err := consumer.ConnectToNSQD(l.config.nsqd()); err != nil {
-			return fmt.Errorf("consuming %s: %w", topic, err)
+
+		// go-nsq only retries connections that drop, not ones that
+		// never connected
+		err = retry(ctx, "consuming "+topic, func() error {
+			return consumer.ConnectToNSQD(l.config.nsqd())
+		})
+		if err != nil {
+			return err
 		}
 		l.consumers = append(l.consumers, consumer)
 	}
 
 	return nil
+}
+
+// Without nsqlookupd, go-nsq waits LookupdPollInterval (60s by default)
+// between attempts to reconnect to nsqd, so after nsqd restarts nothing
+// was logged for a minute. Retry much sooner.
+const reconnectInterval = 5 * time.Second
+
+func consumerConfig() *nsq.Config {
+	config := nsq.NewConfig()
+	config.LookupdPollInterval = reconnectInterval
+	return config
+}
+
+// retry calls f until it succeeds, reconnectInterval apart, or until
+// ctx is done.
+func retry(ctx context.Context, what string, f func() error) error {
+	for {
+		err := f()
+		if err == nil {
+			return nil
+		}
+		log.Printf("%s: %v (retrying in %s)", what, err, reconnectInterval)
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s: %w", what, err)
+		case <-time.After(reconnectInterval):
+		}
+	}
 }
 
 // Stop finishes the messages in flight, then disconnects.

@@ -197,6 +197,12 @@ func main() {
 }
 
 func logType(m *lierc.IRCMessage) string {
+	// TAGMSG also carries typing notifications, which are only
+	// useful live; reactions are the only ones worth keeping
+	if m.Command == "TAGMSG" && !isReaction(m) {
+		return "pass"
+	}
+
 	t, ok := loggable[m.Command]
 
 	if ok {
@@ -216,6 +222,12 @@ func logType(m *lierc.IRCMessage) string {
 	}
 
 	return "pass"
+}
+
+func isReaction(m *lierc.IRCMessage) bool {
+	_, react := m.Tags["+draft/react"]
+	_, unreact := m.Tags["+draft/unreact"]
+	return react || unreact
 }
 
 func insertPrivate(db *sql.DB, client_id string, nick string, time float64) error {
@@ -283,7 +295,7 @@ func updateHighlighters(db *sql.DB) {
 		err = json.Unmarshal([]byte(highlight), &terms)
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to unmarshall highlights '%s'\n", err.Error)
+			fmt.Fprintf(os.Stderr, "Failed to unmarshall highlights '%s'\n", err)
 			continue
 		}
 

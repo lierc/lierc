@@ -278,6 +278,12 @@ func (l *Logger) reloadHighlights(ctx context.Context) {
 		log.Print(err)
 	}
 	l.highlights.Replace(patterns)
+
+	summary := fmt.Sprintf("loaded highlights for %d of %d connections", len(patterns), len(configs))
+	if len(errs) > 0 {
+		summary += fmt.Sprintf(", %d couldn't be read", len(errs))
+	}
+	log.Print(summary)
 }
 
 // listenForHighlights reloads highlights whenever the API sends

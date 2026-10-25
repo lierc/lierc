@@ -3,16 +3,17 @@
 # Delete the typing notifications (TAGMSG without a reaction tag) that
 # lierc-logger stored in the log table before it stopped logging them.
 #
-# Works through the table in id ranges, so each DELETE is a short
-# transaction that uses the primary key instead of scanning the whole
-# table. Run it after deploying the logger fix, so no new ones appear.
+# Works through the table in id ranges, newest first, so each DELETE is
+# a short transaction that uses the primary key instead of scanning the
+# whole table, and recent history is cleaned up before old history. Run
+# it after deploying the logger fix, so no new ones appear.
 #
 # usage: delete-typing-log [--dry-run] [--batch IDS] [--sleep SECONDS] [--start ID]
 #
 #   --dry-run  only count what would be deleted
 #   --batch    ids per range (default 50000)
 #   --sleep    pause between ranges, to go easy on the database (default 0)
-#   --start    first id to look at, e.g. to resume an interrupted run
+#   --start    highest id to look at, e.g. to resume an interrupted run
 #
 # Connects with psql using the same POSTGRES_HOST, POSTGRES_USER,
 # POSTGRES_PASSWORD and POSTGRES_DB variables as the logger, falling
@@ -31,7 +32,7 @@ while [ $# -gt 0 ]; do
     --batch) batch="$2"; shift ;;
     --sleep) pause="$2"; shift ;;
     --start) start="$2"; shift ;;
-    -h|--help) sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 1 ;;
   esac
   shift
@@ -58,14 +59,14 @@ if [ -z "$max" ]; then
   exit 0
 fi
 
-lo="${start:-$min}"
+hi="${start:-$max}"
 total=0
 
-echo "$([ "$dry_run" = 1 ] && echo "counting" || echo "deleting") typing notifications in ids $lo..$max, $batch at a time"
+echo "$([ "$dry_run" = 1 ] && echo "counting" || echo "deleting") typing notifications in ids $hi..$min, $batch at a time"
 
-while [ "$lo" -le "$max" ]; do
-  hi=$((lo + batch))
-  range="id >= $lo AND id < $hi AND $typing"
+while [ "$hi" -ge "$min" ]; do
+  lo=$((hi - batch))
+  range="id > $lo AND id <= $hi AND $typing"
 
   if [ "$dry_run" = 1 ]; then
     n=$(sql "SELECT count(*) FROM log WHERE $range")
@@ -74,10 +75,10 @@ while [ "$lo" -le "$max" ]; do
   fi
 
   total=$((total + n))
-  echo "ids $lo..$((hi - 1)): $n (total $total)"
+  echo "ids $hi..$(( lo + 1 > min ? lo + 1 : min )): $n (total $total)"
 
-  lo=$hi
-  if [ "$pause" != 0 ] && [ "$lo" -le "$max" ]; then
+  hi=$lo
+  if [ "$pause" != 0 ] && [ "$hi" -ge "$min" ]; then
     sleep "$pause"
   fi
 done

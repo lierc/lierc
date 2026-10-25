@@ -21,6 +21,13 @@ func TestLogType(t *testing.T) {
 		{"no tags", "TAGMSG", nil, logPass},
 		{"nick", "NICK", nil, logSkip},
 		{"motd", "372", nil, logStatus},
+		{"sasl numeric", "903", nil, logStatus},
+		{"error numeric", "433", nil, logStatus},
+		{"other numeric", "353", nil, logPass},
+		{"server notice", "NOTICE", nil, logStatus},
+		{"part", "PART", nil, logTarget},
+		{"connect", "CONNECT", nil, logStatus},
+		{"quit", "QUIT", nil, logSkip},
 		{"unknown", "PONG", nil, logPass},
 	}
 

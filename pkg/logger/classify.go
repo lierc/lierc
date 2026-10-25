@@ -36,60 +36,40 @@ func (k logKind) String() string {
 // the channel name status messages are stored under
 const statusChannel = "status"
 
-// How each command is logged. Anything not listed, apart from the
-// NOTICE and numeric rules in logType, is passed through.
-var loggable = map[string]logKind{
-	"PRIVMSG":    logTarget,
-	"TAGMSG":     logTarget,
-	"JOIN":       logTarget,
-	"PART":       logTarget,
-	"TOPIC":      logTarget,
-	"MODE":       logTarget,
-	"NICK":       logSkip,
-	"QUIT":       logSkip,
-	"ERROR":      logStatus,
-	"CONNECT":    logStatus,
-	"DISCONNECT": logStatus,
-	"001":        logStatus,
-	"002":        logStatus,
-	"003":        logStatus,
-	"004":        logStatus,
-	"005":        logStatus,
-	"251":        logStatus,
-	"252":        logStatus,
-	"253":        logStatus,
-	"254":        logStatus,
-	"255":        logStatus,
-	"265":        logStatus,
-	"266":        logStatus,
-	"250":        logStatus,
-	"375":        logStatus,
-	"372":        logStatus,
-	"376":        logStatus,
-}
-
 func logType(m *lierc.IRCMessage) logKind {
-	// TAGMSG also carries typing notifications, which are only
-	// useful live; reactions are the only ones worth keeping
-	if m.Command == "TAGMSG" && !isReaction(m) {
+	switch m.Command {
+	case "TAGMSG":
+		// also carries typing notifications, which are only useful
+		// live; reactions are the only ones worth keeping
+		if isReaction(m) {
+			return logTarget
+		}
 		return logPass
-	}
 
-	if kind, ok := loggable[m.Command]; ok {
-		return kind
-	}
+	case "PRIVMSG", "JOIN", "PART", "TOPIC", "MODE":
+		return logTarget
 
-	if m.Command == "NOTICE" {
+	case "NOTICE":
 		if m.Direct {
 			return logTarget
 		}
 		return logStatus
-	}
 
-	if m.Command[0] == '4' || m.Command[0] == '5' || m.Command[0] == '9' {
+	// these arrive on the multi topic instead
+	case "NICK", "QUIT":
+		return logSkip
+
+	case "ERROR", "CONNECT", "DISCONNECT",
+		"001", "002", "003", "004", "005", // welcome
+		"250", "251", "252", "253", "254", "255", "265", "266", // user counts
+		"372", "375", "376": // MOTD
 		return logStatus
 	}
 
+	// other errors (4xx, 5xx) and 9xx (SASL) numerics
+	if c := m.Command[0]; c == '4' || c == '5' || c == '9' {
+		return logStatus
+	}
 	return logPass
 }
 

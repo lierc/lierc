@@ -46,7 +46,9 @@ func main() {
 	}
 
 	go notifier.Accumulate()
-	notifier.ListenNSQ()
+	if err := notifier.ListenNSQ(); err != nil {
+		panic(err)
+	}
 
 	fmt.Print("Ready!\n")
 	wg.Wait()

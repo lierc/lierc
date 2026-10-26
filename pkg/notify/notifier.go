@@ -8,6 +8,7 @@ import (
 	"github.com/nsqio/go-nsq"
 	"golang.org/x/time/rate"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -72,11 +73,14 @@ func (c *NotifierConfig) SetUserRateLimit(limit string) error {
 	return nil
 }
 
-func (n *Notifier) ListenNSQ() {
+// ListenNSQ consumes the highlight topic, blocking until nsqd is reachable.
+func (n *Notifier) ListenNSQ() error {
 	nsqd := fmt.Sprintf("%s:4150", n.Config.NSQDHost)
-	nsq_config := nsq.NewConfig()
 
-	topic, _ := nsq.NewConsumer("highlight", "notifier", nsq_config)
+	topic, err := nsq.NewConsumer("highlight", "notifier", consumerConfig())
+	if err != nil {
+		return err
+	}
 	topic.AddHandler(nsq.HandlerFunc(func(m *nsq.Message) error {
 		var logged LoggedMessage
 		err := json.Unmarshal(m.Body, &logged)
@@ -89,7 +93,35 @@ func (n *Notifier) ListenNSQ() {
 		return nil
 	}))
 
-	topic.ConnectToNSQD(nsqd)
+	// go-nsq only retries connections that drop, not ones that never
+	// connected
+	retry("consuming highlight", func() error {
+		return topic.ConnectToNSQD(nsqd)
+	})
+	return nil
+}
+
+// Without nsqlookupd, go-nsq waits LookupdPollInterval (60s by default)
+// between attempts to reconnect to nsqd, so after nsqd restarts no
+// notifications were sent for a minute. Retry much sooner.
+var reconnectInterval = 5 * time.Second
+
+func consumerConfig() *nsq.Config {
+	config := nsq.NewConfig()
+	config.LookupdPollInterval = reconnectInterval
+	return config
+}
+
+// retry calls f until it succeeds, reconnectInterval apart.
+func retry(what string, f func() error) {
+	for {
+		err := f()
+		if err == nil {
+			return
+		}
+		log.Printf("%s: %v (retrying in %s)", what, err, reconnectInterval)
+		time.Sleep(reconnectInterval)
+	}
 }
 
 func (n *Notifier) StreamCount(connection string) int {

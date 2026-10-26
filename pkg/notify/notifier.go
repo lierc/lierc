@@ -81,23 +81,26 @@ func (n *Notifier) ListenNSQ() error {
 	if err != nil {
 		return err
 	}
-	topic.AddHandler(nsq.HandlerFunc(func(m *nsq.Message) error {
-		var logged LoggedMessage
-		err := json.Unmarshal(m.Body, &logged)
-
-		if err != nil {
-			panic(err)
-		}
-
-		n.Queue <- &logged
-		return nil
-	}))
+	topic.AddHandler(nsq.HandlerFunc(n.handleHighlight))
 
 	// go-nsq only retries connections that drop, not ones that never
 	// connected
 	retry("consuming highlight", func() error {
 		return topic.ConnectToNSQD(nsqd)
 	})
+	return nil
+}
+
+// handleHighlight queues a highlight for Accumulate. A message that is not
+// JSON is logged and dropped rather than retried forever.
+func (n *Notifier) handleHighlight(m *nsq.Message) error {
+	var logged LoggedMessage
+	if err := json.Unmarshal(m.Body, &logged); err != nil {
+		log.Printf("dropping unreadable highlight message: %v\n%s", err, m.Body)
+		return nil
+	}
+
+	n.Queue <- &logged
 	return nil
 }
 

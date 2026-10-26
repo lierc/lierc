@@ -65,12 +65,12 @@ READLINE:
 		local := strings.TrimSpace(parts[0])
 		remote := strings.TrimSpace(parts[1])
 
-		resp, err := http.Get(portmap)
-		defer resp.Body.Close()
-
-		decoder := json.NewDecoder(resp.Body)
 		ports := make([][]string, 0)
-		err = decoder.Decode(&ports)
+		resp, err := http.Get(portmap)
+		if err == nil {
+			err = json.NewDecoder(resp.Body).Decode(&ports)
+			resp.Body.Close()
+		}
 
 		if err != nil {
 			log.Printf("Error decoding portmap: %v", err)
@@ -80,16 +80,16 @@ READLINE:
 		}
 
 		for _, mapping := range ports {
-			if mapping[1] == local && mapping[2] == remote {
+			if len(mapping) >= 3 && mapping[1] == local && mapping[2] == remote {
 				out := fmt.Sprintf("%s, %s : USERID : UNIX : %s\n", local, remote, mapping[0])
-				log.Printf(out)
+				log.Print(out)
 				conn.Write([]byte(out))
 				continue READLINE
 			}
 		}
 
 		out := fmt.Sprintf("%s, %s : ERROR : NO-USER\n", local, remote)
-		log.Printf(out)
+		log.Print(out)
 		conn.Write([]byte(out))
 	}
 }

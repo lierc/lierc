@@ -55,6 +55,7 @@ type IRCClient struct {
 	debug         int64
 	timer         *time.Timer
 	wg            *sync.WaitGroup
+	closed        func() // wg.Done, but at most once
 }
 
 type IRCClientStatus struct {
@@ -146,9 +147,11 @@ func (c *IRCClient) Destroy() {
 	c.quitting = true
 	c.StatusMessage = "Closing connection"
 	c.wg = &sync.WaitGroup{}
-	c.Unlock()
-
 	c.wg.Add(1)
+	// Both the disconnect and the timer below mark the connection
+	// closed, and when the timer closes it they both happen
+	c.closed = sync.OnceFunc(c.wg.Done)
+	c.Unlock()
 
 	if c.timer != nil {
 		c.timer.Stop()
@@ -156,7 +159,7 @@ func (c *IRCClient) Destroy() {
 
 	timer := time.AfterFunc(2*time.Second, func() {
 		c.irc.Close()
-		c.wg.Done()
+		c.closed()
 	})
 
 	Status <- c.Status()
@@ -212,7 +215,7 @@ func (c *IRCClient) Event() {
 			} else if !c.quitting {
 				c.Reconnect()
 			} else {
-				c.wg.Done()
+				c.closed()
 			}
 		case <-c.quit:
 			return

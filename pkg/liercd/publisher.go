@@ -24,6 +24,7 @@ type Publisher struct {
 	pub      publisher
 	queue    chan outgoing
 	interval time.Duration
+	pending  *outgoing // still unpublished when Run stopped
 }
 
 // QueueSize is how many events are held while nsqd is unreachable.
@@ -64,8 +65,33 @@ func (p *Publisher) Run(ctx context.Context) {
 			return
 		case o := <-p.queue:
 			if !p.publish(ctx, o) {
+				p.pending = &o
 				return
 			}
+		}
+	}
+}
+
+// Flush publishes what Run left unpublished, in order, until the queue
+// is empty or ctx is done. It must not run alongside Run. It returns how
+// many events were left unpublished.
+func (p *Publisher) Flush(ctx context.Context) int {
+	if p.pending != nil {
+		if !p.publish(ctx, *p.pending) {
+			return len(p.queue) + 1
+		}
+		p.pending = nil
+	}
+
+	for {
+		select {
+		case o := <-p.queue:
+			if !p.publish(ctx, o) {
+				p.pending = &o
+				return len(p.queue) + 1
+			}
+		default:
+			return 0
 		}
 	}
 }

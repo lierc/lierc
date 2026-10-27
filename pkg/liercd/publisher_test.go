@@ -109,6 +109,53 @@ func TestPublisherStopsWhileRetrying(t *testing.T) {
 	}
 }
 
+func TestPublisherFlushesWhatRunLeft(t *testing.T) {
+	pub := &fakePublisher{fails: 1 << 30}
+	p := newTestPublisher(pub, 10)
+	p.Enqueue("chats", 1)
+	p.Enqueue("chats", 2)
+
+	// Run stops while retrying 1, with 2 still queued
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.Run(ctx)
+		close(done)
+	}()
+	time.Sleep(5 * time.Millisecond)
+	cancel()
+	<-done
+
+	pub.mu.Lock()
+	pub.fails = 0
+	pub.mu.Unlock()
+	p.Enqueue("chats", 3)
+
+	if left := p.Flush(context.Background()); left != 0 {
+		t.Fatalf("Flush left %d unpublished, want 0", left)
+	}
+	got := pub.wait(t, 3)
+	want := []string{"chats 1", "chats 2", "chats 3"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("published %v, want %v", got, want)
+		}
+	}
+}
+
+func TestPublisherFlushGivesUp(t *testing.T) {
+	pub := &fakePublisher{fails: 1 << 30}
+	p := newTestPublisher(pub, 10)
+	p.Enqueue("chats", 1)
+	p.Enqueue("chats", 2)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if left := p.Flush(ctx); left != 2 {
+		t.Fatalf("Flush left %d unpublished, want 2", left)
+	}
+}
+
 func TestPublisherSkipsUnencodable(t *testing.T) {
 	pub := &fakePublisher{}
 	p := newTestPublisher(pub, 10)

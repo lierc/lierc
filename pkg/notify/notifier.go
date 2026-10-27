@@ -37,6 +37,7 @@ type NotifierConfig struct {
 	APIKey          string
 	APIURL          string
 	VAPIDPrivateKey string
+	VAPIDPublicKey  string
 	NSQDHost        string
 	SMTPHost        string
 	SMTPPort        int

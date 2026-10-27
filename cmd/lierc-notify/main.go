@@ -23,6 +23,7 @@ func main() {
 		APIKey:          os.Getenv("API_KEY"),
 		APIURL:          os.Getenv("API_URL"),
 		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE"),
+		VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC"),
 		NSQDHost:        os.Getenv("NSQD_HOST"),
 		Delay:           15 * time.Second,
 	}

@@ -56,6 +56,7 @@ func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) (*http.Resp
 		Subscriber:      n.Config.APIURL,
 		TTL:             10,
 		VAPIDPrivateKey: n.Config.VAPIDPrivateKey,
+		VAPIDPublicKey:  n.Config.VAPIDPublicKey,
 	})
 
 	if err != nil {

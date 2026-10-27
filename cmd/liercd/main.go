@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"github.com/lierc/lierc/pkg/lierc"
 	"github.com/lierc/lierc/pkg/liercd"
@@ -26,23 +26,26 @@ func main() {
 		os.Exit(0)
 	}()
 
-	go func() {
-		nsq_config := nsq.NewConfig()
-		nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
-		w, _ := nsq.NewProducer(nsqd, nsq_config)
+	nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
+	w, err := nsq.NewProducer(nsqd, nsq.NewConfig())
+	if err != nil {
+		log.Fatal(err)
+	}
 
+	// go-nsq reconnects on the next publish after nsqd goes away, so
+	// retrying failed publishes is all the reconnect logic needed
+	p := liercd.NewPublisher(w, liercd.QueueSize)
+	go p.Run(context.Background())
+
+	go func() {
 		for {
 			select {
 			case event := <-lierc.Events:
-				json, _ := json.Marshal(event)
-				w.Publish("chats", json)
+				p.Enqueue("chats", event)
 			case multi := <-lierc.Multi:
-				json, _ := json.Marshal(multi)
-				w.Publish("multi", json)
+				p.Enqueue("multi", multi)
 			case status := <-lierc.Status:
-				event := m.ConnectEvent(status)
-				json, _ := json.Marshal(event)
-				w.Publish("chats", json)
+				p.Enqueue("chats", m.ConnectEvent(status))
 			}
 		}
 	}()

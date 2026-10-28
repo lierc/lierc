@@ -52,3 +52,21 @@ func TestSendWebPushSendsVAPIDPublicKey(t *testing.T) {
 		t.Fatalf("Authorization %q does not end with the VAPID public key %q", auth, public)
 	}
 }
+
+func TestWebPushGone(t *testing.T) {
+	for status, gone := range map[int]bool{
+		http.StatusCreated:             false,
+		http.StatusBadRequest:          false,
+		http.StatusUnauthorized:        false,
+		http.StatusForbidden:           false,
+		http.StatusNotFound:            true,
+		http.StatusGone:                true,
+		http.StatusTooManyRequests:     false,
+		http.StatusInternalServerError: false,
+		http.StatusServiceUnavailable:  false,
+	} {
+		if got := WebPushGone(status); got != gone {
+			t.Errorf("WebPushGone(%d) = %v, want %v", status, got, gone)
+		}
+	}
+}

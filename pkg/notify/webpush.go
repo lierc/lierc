@@ -62,6 +62,7 @@ func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) (*http.Resp
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
 
 	fmt.Fprintf(os.Stderr, "%s\n", res.Status)
 	body, err := ioutil.ReadAll(res.Body)
@@ -73,4 +74,11 @@ func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) (*http.Resp
 	fmt.Fprintf(os.Stderr, "%s\n", body)
 
 	return res, nil
+}
+
+// WebPushGone reports whether a push service's response status means the
+// subscription no longer exists and should be deleted. Other failures, such
+// as rate limiting, outages or a rejected VAPID key, leave it in place.
+func WebPushGone(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusGone
 }

@@ -352,9 +352,12 @@ func (n *Notifier) Send(o *Notification) {
 	for _, c := range o.Pref.WebPushConfigs {
 		res, err := n.SendWebPush(o.Messages, c)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err)
-		} else if res.StatusCode >= 400 {
+			fmt.Fprintf(os.Stderr, "Error sending webpush to %s for %s: %s\n", c.Endpoint, c.User, err)
+		} else if WebPushGone(res.StatusCode) {
+			fmt.Fprintf(os.Stderr, "Deleting webpush %s for %s: %s\n", c.Endpoint, c.User, res.Status)
 			n.DeleteWebPushConfig(c)
+		} else if res.StatusCode >= 400 {
+			fmt.Fprintf(os.Stderr, "Webpush to %s for %s failed: %s\n", c.Endpoint, c.User, res.Status)
 		}
 	}
 

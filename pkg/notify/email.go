@@ -128,7 +128,7 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 		"\r\n" +
 		"You were mentioned in the following channels:\n\n" +
 		strings.Join(lines, "\n\n") + "\n\n" +
-		"This message is coming from the relaychat.party IRC client. You enabled email notifications in the client. When someone mentions your name, or uses a word that matches a highlight term you configured, you will recieve an email from us. If you would like to stop recieving these messages, please use this link to unsubscribe: https://relaychat.party/app/unsubscribe\n\n" +
+		"This message is coming from the relaychat.party IRC client. You enabled email notifications in the client. When someone mentions your name, or uses a word that matches a highlight term you configured, you will recieve an email from us. If you would like to stop recieving these messages, please use this link to unsubscribe: https://relaychat.party/unsubscribe/\n\n" +
 		"Thank you for using relaychat.party!" +
 		"\r\n")
 

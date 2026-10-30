@@ -19,6 +19,14 @@ import (
 // closing the connections can take 3s.
 const flushTimeout = 5 * time.Second
 
+// The address for the command API, from LISTEN (e.g. 127.0.0.1:5005).
+func listenAddr() string {
+	if addr := os.Getenv("LISTEN"); addr != "" {
+		return addr
+	}
+	return "0.0.0.0:5005"
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -61,8 +69,9 @@ func main() {
 
 	go func() {
 		http.HandleFunc("/", m.HandleCommand)
-		log.Print("Listening on port 5005")
-		http.ListenAndServe("0.0.0.0:5005", nil)
+		addr := listenAddr()
+		log.Printf("Listening on %s", addr)
+		http.ListenAndServe(addr, nil)
 	}()
 
 	<-ctx.Done()

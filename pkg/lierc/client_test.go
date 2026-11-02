@@ -3,6 +3,7 @@ package lierc
 import (
 	"bufio"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,9 @@ func ignoreQuitServer(t *testing.T) (port int, quit <-chan struct{}) {
 
 func TestDestroyWhenServerIgnoresQuit(t *testing.T) {
 	port, quit := ignoreQuitServer(t)
+	// the test server is on loopback, which only the default network may use
+	t.Setenv("DEFAULT_NETWORK_HOST", "127.0.0.1")
+	t.Setenv("DEFAULT_NETWORK_PORT", strconv.Itoa(port))
 
 	connected := make(chan struct{}, 1)
 	stop := make(chan struct{})

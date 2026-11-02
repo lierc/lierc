@@ -28,6 +28,7 @@ type IRCConn struct {
 	lastmsg   time.Time
 	limiter   *rate.Limiter
 	errored   bool
+	exempt    bool // may connect to a private address (see Exempt)
 	Connected bool
 }
 
@@ -41,9 +42,9 @@ func (c *IRCConn) Connect(server string, ssl bool) error {
 
 	if ssl {
 		conf := &tls.Config{InsecureSkipVerify: true}
-		conn, err = tls.Dial("tcp", server, conf)
+		conn, err = tls.DialWithDialer(guardedDialer(c.exempt), "tcp", server, conf)
 	} else {
-		conn, err = net.Dial("tcp", server)
+		conn, err = guardedDialer(c.exempt).Dial("tcp", server)
 	}
 
 	if err != nil {

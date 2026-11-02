@@ -139,6 +139,7 @@ func (c *IRCClient) CreateConn() *IRCConn {
 		id:        c.Id,
 		debug:     c.debug,
 		limiter:   rate.NewLimiter(1, 4),
+		exempt:    Exempt(c.Config),
 	}
 }
 

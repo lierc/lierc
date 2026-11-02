@@ -36,9 +36,11 @@ var blockedPrefixes = []netip.Prefix{
 }
 
 // BlockedIP reports whether liercd refuses to connect to ip. An
-// IPv4-mapped IPv6 address is checked as the IPv4 address it carries.
+// IPv4-mapped IPv6 address is checked as the IPv4 address it carries, and
+// any zone is ignored.
 func BlockedIP(ip netip.Addr) bool {
-	ip = ip.Unmap()
+	// a zone (fe80::1%eth0) would make Contains always false
+	ip = ip.WithZone("").Unmap()
 	for _, p := range blockedPrefixes {
 		if p.Contains(ip) {
 			return true

@@ -105,8 +105,9 @@ func (l *Logger) Start(ctx context.Context) error {
 	}
 
 	for topic, handler := range map[string]nsq.HandlerFunc{
-		"chats": l.handleChat,
-		"multi": l.handleMulti,
+		"chats":  l.handleChat,
+		"multi":  l.handleMulti,
+		"config": l.handleConfig,
 	} {
 		consumer, err := nsq.NewConsumer(topic, "logger", consumerConfig())
 		if err != nil {
@@ -184,6 +185,7 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 	}
 
 	ctx := context.Background()
+
 	route := routeChat(m.Message)
 
 	switch route.kind {
@@ -243,6 +245,30 @@ func (l *Logger) handleMulti(n *nsq.Message) error {
 		ConnectionId: m.Id,
 		MessageId:    id,
 	})
+	return nil
+}
+
+// handleConfig saves config fields liercd changed itself, such as the
+// channel list as it joins and parts, merging them into the saved config.
+// A failure is retried: merging the same fields again is harmless.
+func (l *Logger) handleConfig(n *nsq.Message) error {
+	var c lierc.IRCConfigChange
+	if err := json.Unmarshal(n.Body, &c); err != nil {
+		log.Printf("dropping unreadable config change: %v\n%s", err, n.Body)
+		return nil
+	}
+	if c.Id == "" || len(c.Config) == 0 {
+		log.Printf("dropping empty config change\n%s", n.Body)
+		return nil
+	}
+	fields, err := json.Marshal(c.Config)
+	if err != nil {
+		log.Printf("dropping config change for %s: %v", c.Id, err)
+		return nil
+	}
+	if err := l.store.MergeConfig(context.Background(), c.Id, fields); err != nil {
+		return fmt.Errorf("saving config for %s: %w", c.Id, err)
+	}
 	return nil
 }
 

@@ -231,9 +231,13 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 
 		line := string(raw)
+		// before sending, so the server's reply can't arrive first
+		if nick, ok := requestedNick(line); ok {
+			c.RequestNick(nick)
+		}
 		c.Send(line)
 
-		if len(line) >= 0 && (strings.ToUpper(line[:7]) == "PRIVMSG" || strings.ToUpper(line[:6]) == "NOTICE") && !c.CapEnabled("echo-message") {
+		if isMessage(line) && !c.CapEnabled("echo-message") {
 			event := m.PrivmsgEvent(c, line)
 			event.Message.Prefix.Self = true
 			lierc.Events <- event
@@ -247,7 +251,26 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// the handlers change channels and config with c locked
+		c.RLock()
 		json, _ := json.Marshal(c.ClientData())
+		c.RUnlock()
 		io.WriteString(w, string(json))
 	}
+}
+
+// requestedNick is the nick a raw "NICK <nick>" line asks for.
+func requestedNick(line string) (string, bool) {
+	f := strings.Fields(line)
+	if len(f) < 2 || !strings.EqualFold(f[0], "NICK") {
+		return "", false
+	}
+	nick := strings.TrimPrefix(f[1], ":")
+	return nick, nick != ""
+}
+
+// isMessage reports whether a raw line is a PRIVMSG or NOTICE.
+func isMessage(line string) bool {
+	f := strings.Fields(line)
+	return len(f) > 0 && (strings.EqualFold(f[0], "PRIVMSG") || strings.EqualFold(f[0], "NOTICE"))
 }

@@ -24,6 +24,9 @@ type Store interface {
 	InsertMessages(ctx context.Context, connection string, m *lierc.IRCMessage, channels []string) (int, error)
 	// InsertPrivate records that nick sent connection a private message.
 	InsertPrivate(ctx context.Context, connection string, nick string, time float64) error
+	// MergeConfig merges fields, a JSON object, into the connection's
+	// saved config.
+	MergeConfig(ctx context.Context, connection string, fields []byte) error
 	// Highlights returns each connection's highlight words, as JSON.
 	Highlights(ctx context.Context) (map[string]string, error)
 }
@@ -134,4 +137,15 @@ func (s *pgStore) Highlights(ctx context.Context) (map[string]string, error) {
 		}
 	}
 	return configs, rows.Err()
+}
+
+// MergeConfig merges fields, a JSON object, into the connection's saved
+// config in one statement, so a concurrent edit of other fields isn't
+// lost. A missing connection is not an error.
+func (s *pgStore) MergeConfig(ctx context.Context, connection string, fields []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE connection SET config = config::jsonb || $2::jsonb
+		WHERE id = $1 AND jsonb_typeof(config::jsonb) = 'object' AND jsonb_typeof($2::jsonb) = 'object'`,
+		connection, string(fields))
+	return err
 }

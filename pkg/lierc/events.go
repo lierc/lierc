@@ -114,17 +114,28 @@ func init() {
 			c.Host = m.Prefix.Server
 			c.User = m.Prefix.User
 			c.Send(fmt.Sprintf("MODE %s", m.Params[0]))
+			if c.addConfigChannel(m.Params[0]) {
+				c.configChanged("Channels")
+			}
 		}
 		if channel, ok := c.Channels[name]; ok {
 			channel.Nicks[nick] = []byte{}
 		}
 	}
 
+	// KICK <channel> <nick> [reason]: the kicked nick is a parameter, the
+	// prefix is whoever kicked them
 	handlers["KICK"] = func(c *IRCClient, m *IRCMessage) {
+		if len(m.Params) < 2 {
+			return
+		}
 		name := strings.ToLower(m.Params[0])
-		nick := m.Prefix.Name
+		nick := m.Params[1]
 		if nick == c.Nick {
 			delete(c.Channels, name)
+			if c.removeConfigChannel(name) {
+				c.configChanged("Channels")
+			}
 		} else if channel, ok := c.Channels[name]; ok {
 			delete(channel.Nicks, nick)
 		}
@@ -135,6 +146,9 @@ func init() {
 		nick := m.Prefix.Name
 		if nick == c.Nick {
 			delete(c.Channels, name)
+			if c.removeConfigChannel(name) {
+				c.configChanged("Channels")
+			}
 		} else if channel, ok := c.Channels[name]; ok {
 			delete(channel.Nicks, nick)
 		}
@@ -214,6 +228,12 @@ func init() {
 		channels := []string{}
 		if nick == c.Nick {
 			c.Nick = new_nick
+			// save only a nick we asked for, not a server's rename
+			if c.requestedNick != "" && strings.EqualFold(new_nick, c.requestedNick) {
+				c.requestedNick = ""
+				c.Config.Nick = new_nick
+				c.configChanged("Nick")
+			}
 		}
 		for _, channel := range c.Channels {
 			if _, ok := channel.Nicks[nick]; ok {

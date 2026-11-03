@@ -20,6 +20,17 @@ var Multi = make(chan *IRCClientMultiMessage)
 var Events = make(chan *IRCClientMessage)
 var Status = make(chan *IRCClientStatus)
 
+// ConfigChanges gets the fields of a connection's config that liercd
+// changed itself (its channels as it joins and parts, a nick it was asked
+// to change to), for the logger to save.
+var ConfigChanges = make(chan *IRCConfigChange)
+
+// IRCConfigChange is the changed fields of one connection's config.
+type IRCConfigChange struct {
+	Id     string
+	Config map[string]interface{}
+}
+
 const (
 	CAP_ECHO_MESSAGE = "echo-message"
 	CAP_MESSAGE_TAGS = "message-tags"
@@ -56,6 +67,7 @@ type IRCClient struct {
 	timer         *time.Timer
 	wg            *sync.WaitGroup
 	closed        func() // wg.Done, but at most once
+	requestedNick string // the nick last sent with NICK, until it's taken
 }
 
 type IRCClientStatus struct {
@@ -519,4 +531,64 @@ func (c *IRCClient) capsAcked() []string {
 		caps = append(caps, k)
 	}
 	return caps
+}
+
+// RequestNick records that we asked the server for nick, so taking it
+// updates the config.
+func (c *IRCClient) RequestNick(nick string) {
+	c.Lock()
+	defer c.Unlock()
+	c.requestedNick = nick
+}
+
+// configChanged publishes the current value of the given config fields.
+// Called with c locked, from the handlers.
+func (c *IRCClient) configChanged(fields ...string) {
+	change := &IRCConfigChange{Id: c.Id, Config: map[string]interface{}{}}
+	for _, f := range fields {
+		switch f {
+		case "Channels":
+			change.Config[f] = append([]string{}, c.Config.Channels...)
+		case "Nick":
+			change.Config[f] = c.Config.Nick
+		}
+	}
+	ConfigChanges <- change
+}
+
+// channelName is the channel a config entry names: "#chan key" is #chan,
+// lowercased.
+func channelName(entry string) string {
+	if f := strings.Fields(entry); len(f) > 0 {
+		return strings.ToLower(f[0])
+	}
+	return ""
+}
+
+// addConfigChannel adds name to the config's channels unless it's there,
+// and reports whether it was added.
+func (c *IRCClient) addConfigChannel(name string) bool {
+	for _, entry := range c.Config.Channels {
+		if channelName(entry) == strings.ToLower(name) {
+			return false
+		}
+	}
+	c.Config.Channels = append(c.Config.Channels, name)
+	return true
+}
+
+// removeConfigChannel removes name (and its key) from the config's
+// channels, and reports whether it was there.
+func (c *IRCClient) removeConfigChannel(name string) bool {
+	kept := make([]string, 0, len(c.Config.Channels))
+	for _, entry := range c.Config.Channels {
+		if channelName(entry) != strings.ToLower(name) {
+			kept = append(kept, entry)
+		}
+	}
+	if len(kept) == len(c.Config.Channels) {
+		return false
+	}
+	c.Config.Channels = kept
+	return true
 }

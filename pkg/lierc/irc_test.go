@@ -334,6 +334,57 @@ func TestClientDataConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
+// Handlers run as irc-go callbacks: a QUIT from the server updates the
+// channels and is published to Multi, with the channels it left, as well
+// as to Events with the server's exact line.
+func TestQuitThroughCallbacks(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me", "#a"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	fc.expect(t, "JOIN #a")
+	fc.send(":me!u@h JOIN #a")
+	fc.send(":s 353 me = #a :me bob")
+	fc.send(":s 366 me #a :End of NAMES")
+	line := "@time=2026-11-03T00:00:00.000Z :bob!b@x QUIT :gone"
+	fc.send(line)
+
+	var multi *IRCClientMultiMessage
+	eventually(t, "QUIT on Multi", func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for _, m := range d.multi {
+			if m.Message.Command == "QUIT" {
+				multi = m
+				return true
+			}
+		}
+		return false
+	})
+	if multi.Id != "c1" || !reflect.DeepEqual(multi.Channels, []string{"#a"}) || multi.Message.Prefix.Name != "bob" {
+		t.Errorf("multi %+v, message %+v", multi, multi.Message)
+	}
+	if multi.Message.Tags["time"] != "2026-11-03T00:00:00.000Z" {
+		t.Errorf("multi tags %v", multi.Message.Tags)
+	}
+	d.waitEvent(t, "QUIT")
+	d.mu.Lock()
+	for _, e := range d.events {
+		if e.Message.Command == "QUIT" && e.Message.Raw != line {
+			t.Errorf("Events Raw %q, want %q", e.Message.Raw, line)
+		}
+	}
+	d.mu.Unlock()
+	c.RLock()
+	_, inChannel := c.Channels["#a"].Nicks["bob"]
+	c.RUnlock()
+	if inChannel {
+		t.Error("bob still in #a")
+	}
+}
+
 func TestPortMap(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)

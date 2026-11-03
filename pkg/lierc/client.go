@@ -219,6 +219,11 @@ func (c *IRCClient) connect() {
 		return socket, nil
 	}
 	conn.AddRawCallback(c.onLine)
+	for cmd, h := range handlers {
+		conn.AddCallback(cmd, func(m ircmsg.Message) {
+			c.publishEffects(c.run(conn, h, m))
+		})
+	}
 	conn.AddDisconnectCallback(func(ircmsg.Message) {
 		// irc-go's own reconnect loop (Loop) is never started, but
 		// marking the connection quit keeps it from ever reconnecting
@@ -385,8 +390,10 @@ func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 		return
 	}
 	msg := newIRCMessage(raw, m)
-	e := c.Message(msg)
-	c.publish(msg, e)
+	c.Lock()
+	c.annotate(msg)
+	c.Unlock()
+	Events <- &IRCClientMessage{Id: c.Id, Message: msg}
 }
 
 // Destroy quits the connection, or stops waiting to reconnect, and
@@ -467,13 +474,25 @@ func (c *IRCClient) PortMap() (error, string, string) {
 	return nil, local, remote
 }
 
-// Message runs m through its handler with c locked and returns what the
-// handler wants published; pass it to publish once c is unlocked.
-func (c *IRCClient) Message(m *IRCMessage) effects {
+// run runs h for m with c locked, and returns what h wants published;
+// pass it to publishEffects once c is unlocked. A message from a
+// connection that's no longer c's is ignored.
+func (c *IRCClient) run(conn *ircevent.Connection, h handler, m ircmsg.Message) effects {
 	c.Lock()
+	// deferred, so a handler that panics (irc-go recovers it) can't
+	// leave c locked
 	defer c.Unlock()
 
 	var e effects
+	if c.conn == conn {
+		h(c, m, &e)
+	}
+	return e
+}
+
+// annotate marks a PRIVMSG or NOTICE sent to our nick as Direct, and a
+// PRIVMSG from us as Self. c is locked.
+func (c *IRCClient) annotate(m *IRCMessage) {
 	if m.Prefix == nil {
 		m.Prefix = &IRCPrefix{}
 	}
@@ -484,17 +503,11 @@ func (c *IRCClient) Message(m *IRCMessage) effects {
 			m.Prefix.Self = m.Prefix.Name != "" && m.Prefix.User == c.User && m.Prefix.Name == nick
 		}
 	}
-	if handler, ok := handlers[m.Command]; ok {
-		handler(c, m, &e)
-	}
-
-	return e
 }
 
-// publish sends m to Events, then the multi message and config changes e
-// holds. c must be unlocked: the channels may block.
-func (c *IRCClient) publish(m *IRCMessage, e effects) {
-	Events <- &IRCClientMessage{Id: c.Id, Message: m}
+// publishEffects sends the multi message and config changes e holds. c
+// must be unlocked: the channels may block.
+func (c *IRCClient) publishEffects(e effects) {
 	if e.multi != nil {
 		Multi <- e.multi
 	}

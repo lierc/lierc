@@ -110,13 +110,26 @@ irc-go's own reconnect loop must never run (we drive reconnects, below).
 
 ### Incoming messages
 
-One `AddRawCallback` sees every line, after irc-go's own handlers have run
-(so `CurrentNick()` is already updated). For a line that parsed:
+Our handlers are irc-go callbacks: each is registered with `AddCallback`
+for its command on every new connection, takes irc-go's `ircmsg.Message`,
+updates state with the client locked, and publishes its own `Multi`
+message (QUIT, NICK) and config changes once unlocked (decided by the
+user). irc-go runs them after its own callbacks for the line (so
+`CurrentNick()` is already updated). A callback from a connection that's
+no longer the client's is ignored.
 
-1. Lock the client, run our handler for the command if there is one, unlock.
-2. Build the `IRCMessage` from the raw line and parsed message, set `Direct`
-   and `Prefix.Self` as today, and send it on `Events` (or `Multi` for
-   QUIT/NICK, as today).
+irc-go has no catch-all callback (`AddCallback` rejects "" and "*"), so one
+`AddRawCallback` still publishes every line to `Events`: it builds the
+`IRCMessage` from the server's line and the parsed message, and sets
+`Direct` and `Prefix.Self` as today. It runs after the normal callbacks, so
+for QUIT and NICK, `Multi` is published just before the line's `Events`
+(the order before this change); they're separate NSQ topics with no
+ordering between them.
+
+The `IRCMessage` in a `Multi` message has `Raw` re-serialized from irc-go's
+parsed message (`Line()`), since normal callbacks don't get the server's
+line; tags may come out in a different order. Nothing reads `Raw` (it's
+stored, and only the logger's "missing connection" warning prints it).
 
 Lines that fail to parse are logged and dropped, as today.
 
@@ -124,7 +137,8 @@ Handlers keep today's behaviour for JOIN, PART, KICK, QUIT, NICK, MODE,
 TOPIC, 324, 332, 333, 353, 366, and the config-change publishing (channels
 on join/part/kick; nick only when it's the nick we asked for). Each checks
 `len(m.Params)` before indexing. Handlers for things irc-go now owns go away:
-001/376/422 registration, 433/437, PING, CAP, AUTHENTICATE, 90x, 421.
+registration (001 only resets the retry count), 433/437 at registration,
+PING, CAP, AUTHENTICATE, 90x, 421.
 
 State that irc-go tracks is read from it rather than duplicated where the
 output shape allows:

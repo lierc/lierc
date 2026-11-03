@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/ergochat/irc-go/ircmsg"
 )
 
 // a client in #a and #key (joined with a key) as "me", with no connection
@@ -20,15 +22,30 @@ func configClient() *IRCClient {
 	return c
 }
 
-// handle runs line through c's handlers and returns the config changes
-// they published.
-func handle(t *testing.T, c *IRCClient, line string) []*IRCConfigChange {
+// handleLine runs line through its handler, if it has one, as irc-go's
+// callback would, and returns what the handler wants published.
+func handleLine(t *testing.T, c *IRCClient, line string) effects {
 	t.Helper()
-	m, err := ParseIRCMessage(line)
+	m, err := ircmsg.ParseLine(line)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c.Message(m).changes
+	return handleMessage(c, m)
+}
+
+func handleMessage(c *IRCClient, m ircmsg.Message) effects {
+	h, ok := handlers[m.Command]
+	if !ok {
+		return effects{}
+	}
+	return c.run(c.conn, h, m)
+}
+
+// handle runs line through its handler and returns the config changes it
+// published.
+func handle(t *testing.T, c *IRCClient, line string) []*IRCConfigChange {
+	t.Helper()
+	return handleLine(t, c, line).changes
 }
 
 func changed(t *testing.T, changes []*IRCConfigChange) string {

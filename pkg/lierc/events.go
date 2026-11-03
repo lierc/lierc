@@ -6,20 +6,41 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ergochat/irc-go/ircmsg"
 )
 
-// effects is what handling one message publishes, sent after c is unlocked.
+// effects is what handling one message publishes besides the line itself
+// (which the raw callback publishes), sent after c is unlocked.
 type effects struct {
 	multi   *IRCClientMultiMessage // QUIT and NICK
 	changes []*IRCConfigChange
 }
 
-var handlers = map[string]func(c *IRCClient, m *IRCMessage, e *effects){}
+// A handler updates c's state for one message from the server, with c
+// locked. Each is registered as an irc-go callback for its command on
+// every connection (see connect); irc-go runs them on the connection's
+// read goroutine, after its own callbacks and before the raw callback.
+type handler func(c *IRCClient, m ircmsg.Message, e *effects)
+
+var handlers = map[string]handler{}
+
+// multiMessage is m sent to the channels it affected. Its Raw is m
+// re-serialized: nothing reads Raw, and irc-go doesn't give normal
+// callbacks the server's line.
+func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientMultiMessage {
+	line, _ := m.Line()
+	return &IRCClientMultiMessage{
+		Message:  newIRCMessage(strings.TrimSuffix(line, "\r\n"), m),
+		Id:       c.Id,
+		Channels: channels,
+	}
+}
 
 func init() {
 	// irc-go takes our nick from 001; the rest of setup waits for
 	// Connect to return (finishSetup)
-	handlers["001"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["001"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		c.Retries = 0
 	}
 
@@ -29,7 +50,7 @@ func init() {
 	// or a server's rename, which it doesn't fight. Refusals of other
 	// nicks (irc-go's own attempts to win the configured nick back, or
 	// registration's fallbacks) are irc-go's business.
-	refusedNick := func(c *IRCClient, m *IRCMessage, e *effects) {
+	refusedNick := func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 2 || !c.Registered || c.conn == nil {
 			return
 		}
@@ -47,7 +68,7 @@ func init() {
 	handlers["433"] = refusedNick
 	handlers["437"] = refusedNick
 
-	handlers["353"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["353"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 4 {
 			return
 		}
@@ -71,7 +92,7 @@ func init() {
 		}
 	}
 
-	handlers["366"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["366"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 2 {
 			return
 		}
@@ -81,12 +102,12 @@ func init() {
 		}
 	}
 
-	handlers["MODE"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["MODE"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 2 {
 			return
 		}
 		name := strings.ToLower(m.Params[0])
-		if m.Prefix.Name == name {
+		if m.Nick() == name {
 			// global user mode hmm
 		} else if channel, ok := c.Channels[name]; ok {
 			if m.Params[1] == "" {
@@ -107,12 +128,12 @@ func init() {
 		}
 	}
 
-	handlers["JOIN"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["JOIN"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 1 {
 			return
 		}
 		name := strings.ToLower(m.Params[0])
-		nick := m.Prefix.Name
+		nick := m.Nick()
 		if nick == c.currentNick() {
 			c.Channels[name] = &IRCChannel{
 				Topic:  &IRCTopic{},
@@ -120,8 +141,10 @@ func init() {
 				Nicks:  make(map[string][]byte),
 				Synced: false,
 			}
-			c.Host = m.Prefix.Server
-			c.User = m.Prefix.User
+			if nuh, err := m.NUH(); err == nil {
+				c.Host = nuh.Host
+				c.User = nuh.User
+			}
 			c.Send(fmt.Sprintf("MODE %s", m.Params[0]))
 			if c.addConfigChannel(m.Params[0]) {
 				c.configChanged(e, "Channels")
@@ -134,7 +157,7 @@ func init() {
 
 	// KICK <channel> <nick> [reason]: the kicked nick is a parameter, the
 	// prefix is whoever kicked them
-	handlers["KICK"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["KICK"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 2 {
 			return
 		}
@@ -150,12 +173,12 @@ func init() {
 		}
 	}
 
-	handlers["PART"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["PART"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 1 {
 			return
 		}
 		name := strings.ToLower(m.Params[0])
-		nick := m.Prefix.Name
+		nick := m.Nick()
 		if nick == c.currentNick() {
 			delete(c.Channels, name)
 			if c.removeConfigChannel(name) {
@@ -166,27 +189,23 @@ func init() {
 		}
 	}
 
-	handlers["QUIT"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["QUIT"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		channels := []string{}
-		nick := m.Prefix.Name
+		nick := m.Nick()
 		for _, channel := range c.Channels {
 			if _, ok := channel.Nicks[nick]; ok {
 				delete(channel.Nicks, nick)
 				channels = append(channels, channel.Name)
 			}
 		}
-		e.multi = &IRCClientMultiMessage{
-			Message:  m,
-			Id:       c.Id,
-			Channels: channels,
-		}
+		e.multi = multiMessage(c, m, channels)
 	}
 
-	handlers["TOPIC"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["TOPIC"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 2 {
 			return
 		}
-		nick := m.Prefix.Name
+		nick := m.Nick()
 		name := strings.ToLower(m.Params[0])
 		topic := m.Params[1]
 		if channel, ok := c.Channels[name]; ok {
@@ -196,7 +215,7 @@ func init() {
 		}
 	}
 
-	handlers["332"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["332"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 3 {
 			return
 		}
@@ -207,7 +226,7 @@ func init() {
 		}
 	}
 
-	handlers["324"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["324"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 3 {
 			return
 		}
@@ -219,7 +238,7 @@ func init() {
 		}
 	}
 
-	handlers["333"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["333"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 4 {
 			return
 		}
@@ -231,9 +250,7 @@ func init() {
 		}
 	}
 
-	handlers["NOTICE"] = func(c *IRCClient, m *IRCMessage, e *effects) {}
-
-	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["PRIVMSG"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 2 {
 			return
 		}
@@ -243,11 +260,11 @@ func init() {
 		}
 	}
 
-	handlers["NICK"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+	handlers["NICK"] = func(c *IRCClient, m ircmsg.Message, e *effects) {
 		if len(m.Params) < 1 {
 			return
 		}
-		nick := m.Prefix.Name
+		nick := m.Nick()
 		new_nick := m.Params[0]
 		channels := []string{}
 		// irc-go has already followed our own change, so it's ours when
@@ -275,10 +292,6 @@ func init() {
 				channels = append(channels, channel.Name)
 			}
 		}
-		e.multi = &IRCClientMultiMessage{
-			Message:  m,
-			Id:       c.Id,
-			Channels: channels,
-		}
+		e.multi = multiMessage(c, m, channels)
 	}
 }

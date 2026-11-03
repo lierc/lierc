@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/ergochat/irc-go/ircmsg"
 )
 
 func copyChannels(in map[string]*IRCChannel) map[string]*IRCChannel {
@@ -46,9 +48,9 @@ func TestHandlersShortParams(t *testing.T) {
 		{"me", "#a", "bob", "notanumber"},
 		{"", ""}, {"", "", "", ""},
 	}
-	prefixes := map[string]IRCPrefix{
-		"full":  {Name: "me", User: "u", Server: "h"},
-		"empty": {},
+	prefixes := map[string]string{
+		"full":  "me!u@h",
+		"empty": "",
 	}
 	for _, cmd := range cmds {
 		for pname, prefix := range prefixes {
@@ -61,8 +63,7 @@ func TestHandlersShortParams(t *testing.T) {
 							t.Errorf("%s with %s prefix, params %q: panic: %v", cmd, pname, params, r)
 						}
 					}()
-					p := prefix
-					c.Message(&IRCMessage{Command: cmd, Prefix: &p, Params: params})
+					handleMessage(c, ircmsg.Message{Source: prefix, Command: cmd, Params: params})
 				}()
 				// QUIT takes no params and removes its sender from every channel
 				if len(params) == 0 && cmd != "QUIT" && !reflect.DeepEqual(c.Channels, before) {
@@ -96,40 +97,37 @@ func TestSetPrefix(t *testing.T) {
 }
 
 func TestMessageEffects(t *testing.T) {
-	parse := func(line string) *IRCMessage {
+	// parse runs line through annotate, as the raw callback does
+	parse := func(c *IRCClient, line string) *IRCMessage {
 		m, err := ParseIRCMessage(line)
 		if err != nil {
 			t.Fatal(err)
 		}
+		c.annotate(m)
 		return m
 	}
 
 	c := configClient()
 	c.User = "u"
 
-	m := parse(":bob!u@h PRIVMSG me :hi")
-	c.Message(m)
+	m := parse(c, ":bob!u@h PRIVMSG me :hi")
 	if !m.Direct || m.Prefix.Self {
 		t.Errorf("PRIVMSG to us: Direct %v Self %v", m.Direct, m.Prefix.Self)
 	}
-	m = parse(":bob!u@h PRIVMSG #a :hi")
-	c.Message(m)
+	m = parse(c, ":bob!u@h PRIVMSG #a :hi")
 	if m.Direct {
 		t.Error("PRIVMSG to a channel is Direct")
 	}
-	m = parse(":me!u@h PRIVMSG #a :hi")
-	c.Message(m)
+	m = parse(c, ":me!u@h PRIVMSG #a :hi")
 	if !m.Prefix.Self {
 		t.Error("own PRIVMSG not Self")
 	}
 
-	m = parse(":bob!u@h NOTICE me :hi")
-	c.Message(m)
+	m = parse(c, ":bob!u@h NOTICE me :hi")
 	if !m.Direct {
 		t.Error("NOTICE to us not Direct")
 	}
-	m = parse(":me!u@h NOTICE #a :hi")
-	c.Message(m)
+	m = parse(c, ":me!u@h NOTICE #a :hi")
 	if m.Prefix.Self {
 		t.Error("own NOTICE is Self")
 	}
@@ -137,13 +135,12 @@ func TestMessageEffects(t *testing.T) {
 	// a line with no prefix is never Self, even for a client with no nick
 	blank := configClient()
 	blank.Config.Nick, blank.User = "", ""
-	m = parse("PRIVMSG #a :hi")
-	blank.Message(m)
+	m = parse(blank, "PRIVMSG #a :hi")
 	if m.Prefix.Self {
 		t.Error("prefix-less PRIVMSG is Self")
 	}
 
-	e := c.Message(parse(":bob!u@h QUIT :bye"))
+	e := handleLine(t, c, ":bob!u@h QUIT :bye")
 	if e.multi == nil || e.multi.Id != "c1" || e.multi.Message.Command != "QUIT" {
 		t.Fatalf("QUIT: multi %v", e.multi)
 	}
@@ -155,11 +152,11 @@ func TestMessageEffects(t *testing.T) {
 
 	c = configClient()
 	delete(c.Channels["#key"].Nicks, "bob")
-	e = c.Message(parse(":bob!u@h NICK robert"))
+	e = handleLine(t, c, ":bob!u@h NICK robert")
 	if e.multi == nil || !reflect.DeepEqual(e.multi.Channels, []string{"#a"}) {
 		t.Errorf("NICK: multi %+v", e.multi)
 	}
-	if e := c.Message(parse(":bob!u@h PRIVMSG #a :hi")); e.multi != nil || e.changes != nil {
+	if e := handleLine(t, c, ":bob!u@h PRIVMSG #a :hi"); e.multi != nil || e.changes != nil {
 		t.Error("PRIVMSG has effects")
 	}
 }

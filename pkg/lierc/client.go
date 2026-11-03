@@ -63,10 +63,7 @@ type IRCClient struct {
 	debug         int64
 	timer         *time.Timer
 	requestedNick string // the nick last sent with NICK, until it's taken
-	// irc-go's preferred nick before requestedNick, restored if the
-	// request is refused: the configured nick, or a server's rename
-	nickBeforeRequest string
-	log               *log.Logger
+	log           *log.Logger
 
 	// The current connection attempt. conn and socket are nil between
 	// attempts; attemptDone is closed once an attempt has ended and
@@ -298,34 +295,24 @@ func (c *IRCClient) capsAcked() []string {
 	return caps
 }
 
-// ChangeNick asks the server for nick: records it as requested and calls
-// conn.SetNick (not a raw NICK, which irc-go would later revert).
-// Without a connection it only records the request.
-func (c *IRCClient) ChangeNick(nick string) {
+// RequestNick records that the user asked the server for nick, so taking
+// it updates the config. Call it before sending the NICK, so the server's
+// reply can't arrive first.
+func (c *IRCClient) RequestNick(nick string) {
 	c.Lock()
 	defer c.Unlock()
-	// a request replacing one still pending keeps the nick from before
-	// both, rather than the pending request's
-	if c.requestedNick == "" {
-		if c.conn != nil {
-			c.nickBeforeRequest = c.conn.PreferredNick()
-		} else {
-			c.nickBeforeRequest = c.Config.Nick
-		}
-	}
 	c.requestedNick = nick
-	c.setPreferredNick(nick)
 }
 
-// setPreferredNick makes nick the one irc-go keeps (or tries to win
-// back on its keepalive ticks), and sends NICK nick, which the server
-// ignores when it's our current nick. c is locked, and stays locked
-// while irc-go queues the line: its write queue is buffered and its
-// writer never needs c, so at worst this waits for a stalled socket's
-// write deadline or the connection's end. Keeping the lock orders the
-// handlers' calls with ChangeNick's.
-func (c *IRCClient) setPreferredNick(nick string) {
-	if c.conn != nil {
+// keepCurrentNick makes irc-go prefer the nick we have now, so it never
+// changes our nick itself: on each keepalive tick it asks for its
+// preferred nick when that differs from the current one. SetNick also
+// sends NICK <current>, which the server ignores. c is locked.
+func (c *IRCClient) keepCurrentNick() {
+	if c.conn == nil {
+		return
+	}
+	if nick := c.conn.CurrentNick(); nick != "" && nick != c.conn.PreferredNick() {
 		c.conn.SetNick(nick)
 	}
 }

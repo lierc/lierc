@@ -15,8 +15,9 @@ a maintained library used by the Ergo IRC server.
 
 - `ircevent.Connection` owns the connection: dialing, TLS, line reading
   (`ircreader`), parsing (`ircmsg`), CAP negotiation, SASL PLAIN, PASS,
-  registration, nick-in-use retries, PING/PONG and timeouts.
-- Our code keeps only what irc-go doesn't do: channel/nick/mode/topic state,
+  registration, PING/PONG and timeouts.
+- Our code keeps only what irc-go doesn't do, or does in a way we don't
+  want (nick changes, below): channel/nick/mode/topic state,
   the reconnect backoff, the send rate limit, the private-address guard, and
   turning messages into liercd's events.
 - No handler can panic on a short message: every parameter access is
@@ -100,7 +101,7 @@ For each attempt, a fresh `ircevent.Connection` from the config:
 |---|---|
 | `Server` | `config.Server()` |
 | `UseTLS` / `TLSConfig` | `config.Ssl` / `&tls.Config{InsecureSkipVerify: true}` (kept from today: users connect to servers with self-signed certs) |
-| `Nick` | the client's current preferred nick (`config.Nick` at first) |
+| `Nick` | `config.Nick` |
 | `User`, `RealName` | `config.User`, falling back to `config.Nick` (today's USER sends the user as realname too) |
 | `Password` | `config.Pass` when not SASL |
 | `UseSASL`, `SASLLogin`, `SASLPassword`, `SASLMech` | when `config.SASL`: `config.User`, `config.Pass`, `PLAIN`. SASL failure stays fatal for the attempt (irc-go's default), as today |
@@ -188,27 +189,34 @@ output shape allows:
 and then `SendRaw`, without blocking the caller: the API's HTTP handler and
 the raw callback must not stall on the limiter. A small per-client send
 goroutine fed by a bounded queue is the expected shape; the builder picks the
-details. irc-go's internal sends (PONG, CAP, NICK retries) bypass the limiter,
-which is fine.
+details. irc-go's internal sends (PONG, CAP, registration NICK) bypass the
+limiter, which is fine.
 
-A raw `NICK <nick>` from the API must call `conn.SetNick(nick)` instead of
-sending the line, because irc-go periodically tries to regain its preferred
-nick and would otherwise change back. `RequestNick` stays, so the config is
-updated only when the server confirms.
+Nick changes are ours, not irc-go's (decided by the user). irc-go's two
+nick behaviours are switched off: its nick-in-use handler during
+registration (which tries `nick_0`, `nick_1`, …) and its retry, on each
+keepalive tick, of its preferred nick whenever that differs from the
+current one. The rules:
 
-Nick in use at registration is irc-go's behaviour, unmodified (decided by
-the user, to keep less of our own code): it tries `nick_0`, `nick_1`, …, and
-after registering under a fallback it asks for the configured nick again on
-each keepalive tick (every 4m) until it gets it.
-
-Nicks asked for later are not retried (decided by the user), so irc-go
-doesn't repeat a refused request forever or fight services:
-
-- On 432/433/437 after registration, or a NICK the server applies to us that
-  we didn't ask for (services renames), set irc-go's preferred nick back to
-  `CurrentNick()` and clear `requestedNick`, so irc-go doesn't keep asking.
-- Each new connection starts with `config.Nick`, which only changes when the
-  server confirms a nick we asked for.
+1. Each connection starts with `config.Nick` and no pending request.
+2. Nick in use during registration (433/437 before 001): send
+   `NICK <that nick>_`, so `me`, `me_`, `me__`, as before this branch.
+   irc-go installs its own 433/437 handler inside `Connect()` just before it
+   dials, so our dial removes it (`ClearCallback`) and registers our
+   handlers then, once per connection. A 432 (erroneous nickname) at
+   registration isn't handled, as before.
+3. At 001 and after any NICK about us, irc-go's preferred nick is set to the
+   current nick (`SetNick`, only when they differ; it also sends
+   `NICK <current>`, which servers ignore), so irc-go never changes our
+   nick itself and there's no winning the configured nick back.
+4. A NICK from the API records `requestedNick` and is sent as an ordinary
+   line through our send queue, so it's rate-limited like any other.
+5. A NICK about us matching the request (case-insensitively) saves the
+   nick to `config.Nick` as the server spells it and ends the request. Any
+   other NICK about us (a services rename) just becomes the current nick;
+   nothing is saved, and rule 3 means nothing fights it.
+6. A refusal after registration (432/433/437 naming the requested nick)
+   ends the request; nothing needs undoing.
 
 The manager's "echo the PRIVMSG/NOTICE locally when echo-message isn't
 acked" path stays, reading the acked-caps copy, and only for a line that
@@ -273,10 +281,10 @@ happens under the lock.
 - Tests drive the client against a local fake server on a loopback listener
   (allowed via `Exempt`), as `client_test.go` does today. Cover at least:
   registration and channel join; SASL success and failure; nick in use at
-  registration falling back to `nick_0` and regaining `nick` on a later
-  keepalive tick once it's free; a raw NICK from the API updating the config only on
-  confirmation and not being reverted; a refused NICK and a server rename
-  not being retried after the next keepalive tick; disconnect → "Reconnecting in 15s" →
+  registration falling back to `nick_`, `nick__` and not winning `nick`
+  back; a raw NICK from the API updating the config only on confirmation,
+  in the server's spelling, and not being reverted; a refused NICK and a
+  server rename not being retried after the next keepalive tick; disconnect → "Reconnecting in 15s" →
   reconnect → retries reset; `Destroy` with a server that ignores QUIT.
 - A table test that feeds every handled command with zero, one and too few
   params and asserts no panic and no state change.
@@ -305,10 +313,9 @@ happens under the lock.
 - Tag values in `IRCMessage.Tags` are unescaped (`\s` → space, etc.). Correct
   per the spec; today they're stored escaped.
 - Lines with runs of spaces parse correctly instead of producing empty params.
-- Nick in use during registration becomes `nick_0`, `nick_1`, … instead of
-  `nick_`, `nick__`, and liercd now regains the configured nick when it
-  frees up (a NICK attempt every 4 minutes until then; today it stays on
-  `nick_` until the user changes it).
+- Nick changes from the UI are rate-limited with other lines again.
+- After a nick change, liercd may send one `NICK <current nick>`, which
+  the server ignores (rule 3 above).
 - A server that lags more than 2 minutes, or takes longer than 2 minutes
   to register, now disconnects (with backoff) where today it wouldn't.
 - An incoming line over 8704 bytes with no newline drops the connection

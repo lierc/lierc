@@ -44,6 +44,34 @@ func disconnected(s *IRCClientStatus) bool {
 		s.Message != "Closing connection" && !strings.HasPrefix(s.Message, "Reconnecting in")
 }
 
+// expectNoLine fails if exactly line arrives within d.
+func (fc *fakeConn) expectNoLine(t *testing.T, want string, d time.Duration) {
+	t.Helper()
+	fc.SetReadDeadline(time.Now().Add(d))
+	defer fc.SetReadDeadline(time.Time{})
+	for {
+		line, err := fc.readLine()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return
+			}
+			t.Fatal(err)
+		}
+		if line == want {
+			t.Fatalf("unexpected %q", line)
+		}
+	}
+}
+
+// requestNick asks for nick the way the command API does.
+func requestNick(t *testing.T, c *IRCClient, nick string) {
+	t.Helper()
+	c.RequestNick(nick)
+	if !c.Send("NICK " + nick) {
+		t.Fatalf("NICK %s not queued", nick)
+	}
+}
+
 // expectNo fails if a line starting with prefix arrives within d.
 func (fc *fakeConn) expectNo(t *testing.T, prefix string, d time.Duration) {
 	t.Helper()
@@ -189,6 +217,8 @@ func TestSASL(t *testing.T) {
 	})
 }
 
+// A nick in use during registration gets "_" appended, again for each
+// refusal (our handler, not irc-go's nick_0, nick_1).
 func TestNickInUseAtRegistration(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)
@@ -197,18 +227,19 @@ func TestNickInUseAtRegistration(t *testing.T) {
 	fc := srv.accept(t)
 	fc.expect(t, "NICK me")
 	fc.send(":s 433 * me :in use")
-	if got := fc.expect(t, "NICK "); got != "NICK me_0" {
+	if got := fc.expect(t, "NICK "); got != "NICK me_" {
 		t.Fatalf("after 433: %q", got)
+	}
+	fc.send(":s 437 * me_ :temporarily unavailable")
+	if got := fc.expect(t, "NICK "); got != "NICK me__" {
+		t.Fatalf("after 437: %q", got)
 	}
 	fc.send(":s CAP * ACK :echo-message")
 	fc.send(":s CAP * ACK :message-tags")
 	fc.expect(t, "CAP END")
-	fc.welcome("me_0")
+	fc.welcome("me__")
 	waitRegistered(t, c)
-	c.RLock()
-	nick := c.ClientData().Nick
-	c.RUnlock()
-	if nick != "me_0" {
+	if nick := clientNick(c); nick != "me__" {
 		t.Errorf("Nick %q", nick)
 	}
 }
@@ -537,18 +568,18 @@ func (d *drained) changed() []*IRCConfigChange {
 	return append([]*IRCConfigChange{}, d.changes...)
 }
 
-// registerFallback registers as me_0, the server refusing "me" with 433.
+// registerFallback registers as me_, the server refusing "me" with 433.
 func registerFallback(t *testing.T, fc *fakeConn) {
 	t.Helper()
 	fc.expect(t, "NICK me")
 	fc.send(":s 433 * me :in use")
-	if got := fc.expect(t, "NICK "); got != "NICK me_0" {
+	if got := fc.expect(t, "NICK "); got != "NICK me_" {
 		t.Fatalf("after 433: %q", got)
 	}
 	fc.send(":s CAP * ACK :echo-message")
 	fc.send(":s CAP * ACK :message-tags")
 	fc.expect(t, "CAP END")
-	fc.welcome("me_0")
+	fc.welcome("me_")
 }
 
 func clientNick(c *IRCClient) string {
@@ -557,7 +588,7 @@ func clientNick(c *IRCClient) string {
 	return c.ClientData().Nick
 }
 
-func TestChangeNickNotReverted(t *testing.T) {
+func TestRequestedNickNotReverted(t *testing.T) {
 	fastRetries(t)
 	fastKeepAlive(t)
 	srv := newFakeServer(t)
@@ -567,7 +598,7 @@ func TestChangeNickNotReverted(t *testing.T) {
 	fc.register(t, "me")
 	waitRegistered(t, c)
 
-	c.ChangeNick("new")
+	requestNick(t, c, "new")
 	if got := fc.expect(t, "NICK "); got != "NICK new" {
 		t.Fatalf("sent %q", got)
 	}
@@ -580,6 +611,7 @@ func TestChangeNickNotReverted(t *testing.T) {
 	}
 }
 
+// A refused request just ends: nothing is restored or retried.
 func TestRefusedNickNotRetried(t *testing.T) {
 	fastRetries(t)
 	fastKeepAlive(t)
@@ -590,16 +622,12 @@ func TestRefusedNickNotRetried(t *testing.T) {
 	fc.register(t, "me")
 	waitRegistered(t, c)
 
-	c.ChangeNick("taken")
+	requestNick(t, c, "taken")
 	if got := fc.expect(t, "NICK "); got != "NICK taken" {
 		t.Fatalf("sent %q", got)
 	}
 	fc.send(":s 433 me taken :in use")
-	// back to the nick irc-go preferred before the request
-	if got := fc.expect(t, "NICK "); got != "NICK me" {
-		t.Fatalf("after 433: %q", got)
-	}
-	fc.expectNo(t, "NICK taken", 600*time.Millisecond)
+	fc.expectNo(t, "NICK", 600*time.Millisecond)
 
 	if got := changed(t, d.changed()); got != "" {
 		t.Errorf("published %s", got)
@@ -647,7 +675,7 @@ func TestRefusedNickAfterRenameNotFought(t *testing.T) {
 
 	fc.send(":me!u@h NICK Guest1")
 	eventually(t, "the rename", func() bool { return clientNick(c) == "Guest1" })
-	c.ChangeNick("x")
+	requestNick(t, c, "x")
 	if got := fc.expect(t, "NICK x"); got != "NICK x" {
 		t.Fatalf("sent %q", got)
 	}
@@ -659,7 +687,9 @@ func TestRefusedNickAfterRenameNotFought(t *testing.T) {
 	}
 }
 
-func TestRegainConfiguredNick(t *testing.T) {
+// After registering under a fallback, liercd keeps it: irc-go doesn't ask
+// for the configured nick on its keepalive ticks.
+func TestNoRegainAfterFallback(t *testing.T) {
 	fastRetries(t)
 	fastKeepAlive(t)
 	srv := newFakeServer(t)
@@ -670,19 +700,40 @@ func TestRegainConfiguredNick(t *testing.T) {
 	waitRegistered(t, c)
 
 	// about 3 keepalive ticks
-	if got := fc.expectWithin(t, "NICK ", 700*time.Millisecond); got != "NICK me" {
-		t.Fatalf("sent %q", got)
+	fc.expectNoLine(t, "NICK me", 600*time.Millisecond)
+	if nick := clientNick(c); nick != "me_" {
+		t.Errorf("Nick %q", nick)
 	}
-	fc.send(":me_0!u@h NICK me")
-	eventually(t, "the nick back", func() bool { return clientNick(c) == "me" })
-	fc.expectNo(t, "NICK", 300*time.Millisecond)
-
 	if got := changed(t, d.changed()); got != "" {
 		t.Errorf("published %s", got)
 	}
 }
 
-func TestChangeNickWhileDisconnected(t *testing.T) {
+// A request the server confirms in different case is saved as the server
+// spells it, and irc-go doesn't then change it back to the request's case.
+func TestRequestedNickCaseKept(t *testing.T) {
+	fastRetries(t)
+	fastKeepAlive(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
+
+	requestNick(t, c, "Mixed")
+	fc.expect(t, "NICK Mixed")
+	fc.send(":me!u@h NICK mixed")
+	eventually(t, "nick saved", func() bool { return len(d.changed()) > 0 })
+	if got, want := changed(t, d.changed()), `{"Id":"c1","Config":{"Nick":"mixed"}}`; got != want {
+		t.Errorf("published %s, want %s", got, want)
+	}
+	fc.expectNoLine(t, "NICK Mixed", 600*time.Millisecond)
+}
+
+// A nick request while disconnected is recorded but its NICK isn't
+// queued, and neither blocks.
+func TestRequestNickWhileDisconnected(t *testing.T) {
 	fastRetries(t)
 	retryUnit = time.Hour
 	srv := newFakeServer(t)
@@ -694,20 +745,22 @@ func TestChangeNickWhileDisconnected(t *testing.T) {
 	fc.close()
 	d.nextMessage(t, "Reconnecting in 1h0m0s")
 
-	done := make(chan struct{})
+	done := make(chan bool)
 	go func() {
-		defer close(done)
-		c.ChangeNick("new")
+		c.RequestNick("new")
+		done <- c.Send("NICK new")
 	}()
 	select {
-	case <-done:
+	case queued := <-done:
+		if queued {
+			t.Error("NICK queued while disconnected")
+		}
 	case <-time.After(time.Second):
-		t.Fatal("ChangeNick blocked")
+		t.Fatal("RequestNick or Send blocked")
 	}
 }
 
-// Each attempt starts as the configured nick: the status doesn't show the
-// last session's fallback nick before the next 001.
+// Each connection starts with the configured nick, not the last one's.
 func TestNickResetOnReconnect(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)
@@ -716,7 +769,7 @@ func TestNickResetOnReconnect(t *testing.T) {
 	fc := srv.accept(t)
 	registerFallback(t, fc)
 	waitRegistered(t, c)
-	if nick := clientNick(c); nick != "me_0" {
+	if nick := clientNick(c); nick != "me_" {
 		t.Fatalf("Nick %q", nick)
 	}
 
@@ -860,12 +913,12 @@ func TestNickChangeOnlySavesRequested(t *testing.T) {
 	fc.register(t, "me")
 	waitRegistered(t, c)
 
-	c.ChangeNick("wanted")
+	requestNick(t, c, "wanted")
 	fc.expect(t, "NICK wanted")
 	fc.send(":me!u@h NICK other")
 	eventually(t, "nick other", func() bool { return c.CurrentNick() == "other" })
 
-	c.ChangeNick("Mixed")
+	requestNick(t, c, "Mixed")
 	fc.expect(t, "NICK Mixed")
 	fc.send(":other!u@h NICK mixed")
 	eventually(t, "nick saved", func() bool { return len(d.changed()) > 0 })
@@ -873,7 +926,7 @@ func TestNickChangeOnlySavesRequested(t *testing.T) {
 		t.Errorf("published %s, want %s", got, want)
 	}
 
-	c.ChangeNick("bob2")
+	requestNick(t, c, "bob2")
 	fc.expect(t, "NICK bob2")
 	fc.send(":bob!u@h NICK bob2")
 	fc.send(":s 422 me :No MOTD") // a marker after bob's NICK
@@ -902,8 +955,8 @@ func TestReadQExceeded(t *testing.T) {
 	}
 }
 
-// A nick request pending when the connection drops doesn't carry over:
-// a refusal on the next connection leaves the nick alone.
+// A nick request pending when the connection drops doesn't carry over to
+// the next one.
 func TestNickRequestClearedOnReconnect(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)
@@ -912,7 +965,7 @@ func TestNickRequestClearedOnReconnect(t *testing.T) {
 	fc := srv.accept(t)
 	fc.register(t, "me")
 	waitRegistered(t, c)
-	c.ChangeNick("taken")
+	requestNick(t, c, "taken")
 	fc.expect(t, "NICK taken")
 	fc.close()
 	d.nextMessage(t, "Reconnecting in 20ms")
@@ -920,12 +973,10 @@ func TestNickRequestClearedOnReconnect(t *testing.T) {
 	fc = srv.accept(t)
 	fc.register(t, "me")
 	waitRegistered(t, c)
-	fc.send(":s 433 me taken :in use")
-	fc.expectNo(t, "NICK", 300*time.Millisecond)
 	c.RLock()
-	requested, before := c.requestedNick, c.nickBeforeRequest
+	requested := c.requestedNick
 	c.RUnlock()
-	if requested != "" || before != "" {
-		t.Errorf("requestedNick %q nickBeforeRequest %q", requested, before)
+	if requested != "" {
+		t.Errorf("requestedNick %q", requested)
 	}
 }

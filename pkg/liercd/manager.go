@@ -259,13 +259,11 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// through irc-go, so it doesn't later change the nick back
-		queued := false
+		// before sending, so the server's reply can't arrive first
 		if nick, ok := requestedNick(line); ok {
-			c.ChangeNick(nick)
-		} else {
-			queued = c.Send(line)
+			c.RequestNick(nick)
 		}
+		queued := c.Send(line)
 
 		if shouldEcho(line, queued, c.CapEnabled("echo-message")) {
 			if event := m.PrivmsgEvent(c, line); event != nil {

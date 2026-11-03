@@ -54,30 +54,33 @@ func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientM
 	}
 }
 
-// onWelcome handles 001. irc-go takes our nick from it; the rest of setup
-// waits for Connect to return (finishSetup).
+// onWelcome handles 001. irc-go takes our nick from it, and we have irc-go
+// keep that nick, so it doesn't try to win the configured one back after
+// registering under a fallback. The rest of setup waits for Connect to
+// return (finishSetup).
 func (c *IRCClient) onWelcome(m ircmsg.Message, e *effects) {
 	c.Retries = 0
+	c.keepCurrentNick()
 }
 
-// onNickRefused handles 432, 433 and 437 after registration: a nick we
-// asked for was refused, so don't let irc-go keep asking for it. It goes
-// back to the nick it preferred before the request: the configured nick,
-// which it still wins back, or a server's rename, which it doesn't fight.
-// Refusals of other nicks (irc-go's own attempts to win the configured
-// nick back, or registration's fallbacks) are irc-go's business.
+// onNickRefused handles 432, 433 and 437, a nick refused. During
+// registration (before 001), when the nick is in use (433, 437), it tries
+// the nick with "_" appended: me, me_, me__. irc-go's own handler for
+// these is removed (see addHandlers). Afterwards, a refusal of the nick
+// the user asked for ends the request; nothing else needs undoing, since
+// the request was sent as a plain NICK and irc-go never asked for it.
 func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
-	if len(m.Params) < 2 || !c.Registered || c.conn == nil {
+	if len(m.Params) < 2 || c.conn == nil {
+		return
+	}
+	if c.conn.CurrentNick() == "" {
+		if m.Command != "432" {
+			c.Send("NICK " + m.Params[1] + "_")
+		}
 		return
 	}
 	if c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
-		prev := c.nickBeforeRequest
-		if prev == "" {
-			prev = c.Config.Nick
-		}
 		c.requestedNick = ""
-		c.nickBeforeRequest = ""
-		c.setPreferredNick(prev)
 	}
 }
 
@@ -296,20 +299,15 @@ func (c *IRCClient) onNick(m ircmsg.Message, e *effects) {
 	// irc-go has already followed our own change, so it's ours when
 	// the new nick is irc-go's current one
 	if nick != new_nick && new_nick == c.currentNick() {
-		// save only a nick we asked for, not a server's rename
+		// save only a nick we asked for, as the server spells it, not a
+		// server's rename
 		if c.requestedNick != "" && strings.EqualFold(new_nick, c.requestedNick) {
 			c.requestedNick = ""
-			c.nickBeforeRequest = ""
 			c.Config.Nick = new_nick
 			c.configChanged(e, "Nick")
-		} else if c.conn != nil && !strings.EqualFold(new_nick, c.conn.PreferredNick()) {
-			// a server or services rename: keep it, rather than
-			// have irc-go fight to change back. (A match is irc-go
-			// winning its preferred nick back.)
-			c.requestedNick = ""
-			c.nickBeforeRequest = ""
-			c.setPreferredNick(new_nick)
 		}
+		// either way it's our nick now, and irc-go shouldn't change it
+		c.keepCurrentNick()
 	}
 	for _, channel := range c.Channels {
 		if _, ok := channel.Nicks[nick]; ok {

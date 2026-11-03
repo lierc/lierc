@@ -92,7 +92,12 @@ func (c *IRCClient) connect() {
 		socket = &trackedConn{Conn: sock}
 		c.onConnected(conn, s, socket)
 	})
+	var addHandlers sync.Once
 	conn.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// irc-go has installed its own callbacks by now (Connect does
+		// that just before dialing), so ours can replace its nick-in-use
+		// handling
+		addHandlers.Do(func() { c.addHandlers(conn) })
 		ctx, cancelCtx := context.WithCancel(ctx)
 		defer cancelCtx()
 		defer context.AfterFunc(dialCtx, cancelCtx)()
@@ -102,11 +107,6 @@ func (c *IRCClient) connect() {
 		return socket, nil
 	}
 	conn.AddRawCallback(c.onLine)
-	eachHandler(func(cmd string, h handler) {
-		conn.AddCallback(cmd, func(m ircmsg.Message) {
-			c.publishEffects(c.run(conn, h, m))
-		})
-	})
 	conn.AddDisconnectCallback(func(ircmsg.Message) {
 		// irc-go's own reconnect loop (Loop) is never started, but
 		// marking the connection quit keeps it from ever reconnecting
@@ -123,7 +123,6 @@ func (c *IRCClient) connect() {
 	c.attemptDone = make(chan struct{})
 	c.cancelDial = cancel
 	c.requestedNick = ""
-	c.nickBeforeRequest = ""
 	c.Registered = false
 	c.Unlock()
 
@@ -147,6 +146,21 @@ func (c *IRCClient) connect() {
 		c.finishSetup()
 	}
 	c.Unlock()
+}
+
+// addHandlers registers our handlers as irc-go callbacks on conn. It
+// runs from conn's dial, after irc-go has installed its own callbacks:
+// irc-go's 433 and 437 handlers (which try nick_0, nick_1, ... during
+// registration) are removed first, so ours (onNickRefused) are the only
+// ones.
+func (c *IRCClient) addHandlers(conn *ircevent.Connection) {
+	conn.ClearCallback("433")
+	conn.ClearCallback("437")
+	eachHandler(func(cmd string, h handler) {
+		conn.AddCallback(cmd, func(m ircmsg.Message) {
+			c.publishEffects(c.run(conn, h, m))
+		})
+	})
 }
 
 // finishSetup runs once per connection, when Connect has returned: irc-go

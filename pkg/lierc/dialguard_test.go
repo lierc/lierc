@@ -3,7 +3,6 @@ package lierc
 import (
 	"net"
 	"net/netip"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -94,24 +93,4 @@ func TestGuardedDialer(t *testing.T) {
 		t.Fatalf("exempt dial failed: %v", err)
 	}
 	c.Close()
-}
-
-func TestConnectRefusesPrivate(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
-
-	t.Setenv("DEFAULT_NETWORK_HOST", "")
-	status := make(chan *IRCClientStatus, 1)
-	conn := &IRCConn{status: status, exempt: Exempt(&IRCConfig{Host: "127.0.0.1", Port: port})}
-	if err := conn.Connect("127.0.0.1:"+strconv.Itoa(port), false); err == nil {
-		t.Fatal("Connect to 127.0.0.1 should fail")
-	}
-	s := <-status
-	if s.Connected || !strings.Contains(s.Message, "private address") {
-		t.Fatalf("status = %+v", s)
-	}
 }

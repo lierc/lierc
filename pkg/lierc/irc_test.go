@@ -586,12 +586,17 @@ func TestAckedCapsKept(t *testing.T) {
 	fc.send(":s CAP * ACK :message-tags")
 	fc.expect(t, "CAP END")
 	fc.send(":s 001 me :Welcome")
-	eventually(t, "echo-message after 001", func() bool { return c.CapEnabled("echo-message") })
+	waitRegistered(t, c)
 	if queued := c.Send("PRIVMSG #a :during registration"); !queued {
 		t.Error("Send while connected wasn't queued")
 	}
+	// irc-go's acked caps are only read once Connect has returned, at the
+	// end of MOTD, so on a first connection they're unknown until then
+	if c.CapEnabled("echo-message") {
+		t.Error("echo-message copied before Connect returned")
+	}
 	fc.send(":s 376 me :End of MOTD")
-	waitRegistered(t, c)
+	eventually(t, "echo-message after 376", func() bool { return c.CapEnabled("echo-message") })
 
 	fc.close()
 	d.nextMessage(t, "Reconnecting in 1h0m0s")
@@ -600,6 +605,30 @@ func TestAckedCapsKept(t *testing.T) {
 	}
 	if c.Send("PRIVMSG #a :hi") {
 		t.Error("Send while disconnected was queued")
+	}
+}
+
+// A server that welcomes us in the same write as its CAP ACK, before our
+// CAP END, makes irc-go write its acked caps while we handle 001, 005 and
+// 376. We must not read them until Connect returns: under -race this test
+// fails if we do, and in production concurrent map access kills liercd.
+func TestCapsAckedWithEarlyWelcome(t *testing.T) {
+	fastRetries(t)
+	drain(t)
+	for i := 0; i < 20; i++ {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			srv := newFakeServer(t)
+			c := newTestClient(t, srv.config("me"))
+			fc := srv.accept(t)
+			fc.expect(t, "CAP LS")
+			fc.send(":s CAP * LS :echo-message message-tags")
+			fc.expect(t, "CAP REQ")
+			fc.Write([]byte(":s CAP * ACK :echo-message message-tags\r\n" +
+				":s 001 me :Welcome\r\n" +
+				":s 005 me PREFIX=(ov)@+ :are supported\r\n" +
+				":s 376 me :End of MOTD\r\n"))
+			eventually(t, "echo-message acked", func() bool { return c.CapEnabled("echo-message") })
+		})
 	}
 }
 

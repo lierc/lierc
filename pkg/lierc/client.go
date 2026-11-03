@@ -100,8 +100,10 @@ type IRCClient struct {
 	socket      net.Conn
 	attemptDone chan struct{}
 	cancelDial  context.CancelFunc
-	// a copy of conn.AcknowledgedCaps() from 001, kept between attempts so
-	// the manager doesn't echo messages itself while we're reconnecting
+	// a copy of conn.AcknowledgedCaps() taken when Connect returns, kept
+	// between attempts so the manager doesn't echo messages itself while
+	// we're reconnecting. Until the first Connect returns it's empty, so a
+	// message sent during the first MOTD may be echoed twice.
 	ackedCaps map[string]string
 	joined    bool // config channels joined on this attempt
 
@@ -257,8 +259,7 @@ func (c *IRCClient) connect() {
 		return
 	}
 
-	// irc-go has finished the handshake, so its acked caps are final;
-	// refresh the 001 copy for a server that registered without 001
+	// irc-go has finished the handshake, so its acked caps are final
 	c.Lock()
 	if c.conn == conn {
 		c.copyAckedCaps()
@@ -267,8 +268,11 @@ func (c *IRCClient) connect() {
 }
 
 // copyAckedCaps copies the connection's acked caps. c is locked and
-// c.conn is set. irc-go writes them before CAP END, so they're final
-// once 001 arrives.
+// c.conn is set. Call it only after Connect has returned: AcknowledgedCaps
+// returns irc-go's own map, which the Connect goroutine writes once all
+// CAP REQs are answered or at 376/422, whichever is first. A server that
+// sends 001 early can make that write overlap our reading of 001, 005 or
+// 376, and concurrent map access is fatal to the whole process.
 func (c *IRCClient) copyAckedCaps() {
 	caps := make(map[string]string)
 	for k, v := range c.conn.AcknowledgedCaps() {

@@ -24,9 +24,6 @@ func init() {
 		c.Nick = m.Params[0]
 		c.Registered = true
 		c.Retries = 0
-		if c.conn != nil {
-			c.copyAckedCaps()
-		}
 	}
 
 	// The end of registration, when irc-go has the whole ISUPPORT map:

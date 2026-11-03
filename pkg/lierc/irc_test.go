@@ -431,6 +431,10 @@ func TestRefusedNickNotRetried(t *testing.T) {
 		t.Fatalf("sent %q", got)
 	}
 	fc.send(":s 433 me taken :in use")
+	// back to the nick irc-go preferred before the request
+	if got := fc.expect(t, "NICK "); got != "NICK me" {
+		t.Fatalf("after 433: %q", got)
+	}
 	fc.expectNo(t, "NICK taken", 600*time.Millisecond)
 
 	if got := changed(t, d.changed()); got != "" {
@@ -460,6 +464,32 @@ func TestServerRenameNotFought(t *testing.T) {
 	if got := changed(t, d.changed()); got != "" {
 		t.Errorf("published %s", got)
 	}
+	if nick := clientNick(c); nick != "Guest1" {
+		t.Errorf("Nick %q", nick)
+	}
+}
+
+// A refused request after a services rename goes back to the rename, not
+// the configured nick.
+func TestRefusedNickAfterRenameNotFought(t *testing.T) {
+	fastRetries(t)
+	fastKeepAlive(t)
+	srv := newFakeServer(t)
+	drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
+
+	fc.send(":me!u@h NICK Guest1")
+	eventually(t, "the rename", func() bool { return clientNick(c) == "Guest1" })
+	c.ChangeNick("x")
+	if got := fc.expect(t, "NICK x"); got != "NICK x" {
+		t.Fatalf("sent %q", got)
+	}
+	fc.send(":s 433 Guest1 x :in use")
+	fc.expectNo(t, "NICK me", 600*time.Millisecond)
+
 	if nick := clientNick(c); nick != "Guest1" {
 		t.Errorf("Nick %q", nick)
 	}

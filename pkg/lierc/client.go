@@ -75,7 +75,10 @@ type IRCClient struct {
 	debug         int64
 	timer         *time.Timer
 	requestedNick string // the nick last sent with NICK, until it's taken
-	log           *log.Logger
+	// irc-go's preferred nick before requestedNick, restored if the
+	// request is refused: the configured nick, or a server's rename
+	nickBeforeRequest string
+	log               *log.Logger
 
 	// The current connection attempt. conn and socket are nil between
 	// attempts; attemptDone is closed once an attempt has ended and
@@ -608,10 +611,19 @@ func (c *IRCClient) capsAcked() []string {
 
 // ChangeNick asks the server for nick: records it as requested and calls
 // conn.SetNick (not a raw NICK, which irc-go would later revert).
-// No-op without a connection.
+// Without a connection it only records the request.
 func (c *IRCClient) ChangeNick(nick string) {
 	c.Lock()
 	defer c.Unlock()
+	// a request replacing one still pending keeps the nick from before
+	// both, rather than the pending request's
+	if c.requestedNick == "" {
+		if c.conn != nil {
+			c.nickBeforeRequest = c.conn.PreferredNick()
+		} else {
+			c.nickBeforeRequest = c.Config.Nick
+		}
+	}
 	c.requestedNick = nick
 	c.setPreferredNick(nick)
 }

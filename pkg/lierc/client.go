@@ -208,13 +208,7 @@ func (c *IRCClient) Event() {
 			if c.debug > 1 {
 				log.Printf("%s <--- %s", c.Id, m.Raw)
 			}
-			if c.Message(m) {
-				cmsg := &IRCClientMessage{
-					Id:      c.Id,
-					Message: m,
-				}
-				Events <- cmsg
-			}
+			c.publish(m, c.Message(m))
 		case status := <-c.status:
 			c.Lock()
 			c.Connected = status.Connected
@@ -274,15 +268,37 @@ func (c *IRCClient) Reconnect() {
 	})
 }
 
-func (c *IRCClient) Message(m *IRCMessage) bool {
+// Message runs m through its handler with c locked and returns what the
+// handler wants published; pass it to publish once c is unlocked.
+func (c *IRCClient) Message(m *IRCMessage) effects {
 	c.Lock()
 	defer c.Unlock()
 
+	var e effects
+	if m.Prefix == nil {
+		m.Prefix = &IRCPrefix{}
+	}
+	if (m.Command == "PRIVMSG" || m.Command == "NOTICE") && len(m.Params) > 0 {
+		m.Direct = m.Params[0] == c.Nick
+		m.Prefix.Self = m.Prefix.User == c.User && m.Prefix.Name == c.Nick
+	}
 	if handler, ok := handlers[m.Command]; ok {
-		handler(c, m)
+		handler(c, m, &e)
 	}
 
-	return true
+	return e
+}
+
+// publish sends m to Events, then the multi message and config changes e
+// holds. c must be unlocked: the channels may block.
+func (c *IRCClient) publish(m *IRCMessage, e effects) {
+	Events <- &IRCClientMessage{Id: c.Id, Message: m}
+	if e.multi != nil {
+		Multi <- e.multi
+	}
+	for _, change := range e.changes {
+		ConfigChanges <- change
+	}
 }
 
 func (c *IRCClient) NickCollision(m *IRCMessage) {
@@ -542,8 +558,8 @@ func (c *IRCClient) RequestNick(nick string) {
 }
 
 // configChanged publishes the current value of the given config fields.
-// Called with c locked, from the handlers.
-func (c *IRCClient) configChanged(fields ...string) {
+// Called with c locked, from the handlers; the change is sent by publish.
+func (c *IRCClient) configChanged(e *effects, fields ...string) {
 	change := &IRCConfigChange{Id: c.Id, Config: map[string]interface{}{}}
 	for _, f := range fields {
 		switch f {
@@ -553,7 +569,7 @@ func (c *IRCClient) configChanged(fields ...string) {
 			change.Config[f] = c.Config.Nick
 		}
 	}
-	ConfigChanges <- change
+	e.changes = append(e.changes, change)
 }
 
 // channelName is the channel a config entry names: "#chan key" is #chan,

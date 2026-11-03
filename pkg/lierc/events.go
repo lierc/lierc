@@ -9,17 +9,26 @@ import (
 	"time"
 )
 
-var handlers = map[string]func(*IRCClient, *IRCMessage){}
+// effects is what handling one message publishes, sent after c is unlocked.
+type effects struct {
+	multi   *IRCClientMultiMessage // QUIT and NICK
+	changes []*IRCConfigChange
+}
+
+var handlers = map[string]func(c *IRCClient, m *IRCMessage, e *effects){}
 
 func init() {
-	handlers["001"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["001"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 1 {
+			return
+		}
 		c.Nick = m.Params[0]
 		c.Welcome()
 	}
 
 	var prefix, _ = regexp.Compile("^PREFIX=\\(([^)]+)\\)(.+)$")
 
-	handlers["005"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["005"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		for i := 1; i < len(m.Params)-1; i++ {
 			c.Isupport = append(c.Isupport, m.Params[i])
 			if res := prefix.FindStringSubmatch(m.Params[i]); res != nil {
@@ -33,29 +42,32 @@ func init() {
 		}
 	}
 
-	handlers["376"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["376"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		c.Welcome()
 	}
 
-	handlers["421"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["421"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		if strings.HasPrefix(m.Command, "CAP LS") {
 			c.CapNotSupported()
 		}
 	}
 
-	handlers["422"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["422"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		c.Welcome()
 	}
 
-	handlers["433"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["433"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		c.NickCollision(m)
 	}
 
-	handlers["437"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["437"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		c.NickCollision(m)
 	}
 
-	handlers["353"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["353"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 4 {
+			return
+		}
 		name := strings.ToLower(m.Params[2])
 		if channel, ok := c.Channels[name]; ok {
 			if channel.Synced {
@@ -76,24 +88,35 @@ func init() {
 		}
 	}
 
-	handlers["366"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["366"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 2 {
+			return
+		}
 		name := strings.ToLower(m.Params[1])
 		if channel, ok := c.Channels[name]; ok {
 			channel.Synced = true
 		}
 	}
 
-	handlers["MODE"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["MODE"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 2 {
+			return
+		}
 		name := strings.ToLower(m.Params[0])
 		if m.Prefix.Name == name {
 			// global user mode hmm
 		} else if channel, ok := c.Channels[name]; ok {
+			if m.Params[1] == "" {
+				return
+			}
 			action := m.Params[1][0]
 			modes := []byte(m.Params[1][1:])
 
 			for _, mode := range modes {
 				if c.IsNickMode(mode) {
-					channel.SetNickMode(action, mode, m.Params[2])
+					if len(m.Params) > 2 {
+						channel.SetNickMode(action, mode, m.Params[2])
+					}
 				} else if len(m.Params) == 2 {
 					channel.SetMode(action, mode)
 				}
@@ -101,7 +124,10 @@ func init() {
 		}
 	}
 
-	handlers["JOIN"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["JOIN"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 1 {
+			return
+		}
 		name := strings.ToLower(m.Params[0])
 		nick := m.Prefix.Name
 		if nick == c.Nick {
@@ -115,7 +141,7 @@ func init() {
 			c.User = m.Prefix.User
 			c.Send(fmt.Sprintf("MODE %s", m.Params[0]))
 			if c.addConfigChannel(m.Params[0]) {
-				c.configChanged("Channels")
+				c.configChanged(e, "Channels")
 			}
 		}
 		if channel, ok := c.Channels[name]; ok {
@@ -125,7 +151,7 @@ func init() {
 
 	// KICK <channel> <nick> [reason]: the kicked nick is a parameter, the
 	// prefix is whoever kicked them
-	handlers["KICK"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["KICK"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		if len(m.Params) < 2 {
 			return
 		}
@@ -134,27 +160,30 @@ func init() {
 		if nick == c.Nick {
 			delete(c.Channels, name)
 			if c.removeConfigChannel(name) {
-				c.configChanged("Channels")
+				c.configChanged(e, "Channels")
 			}
 		} else if channel, ok := c.Channels[name]; ok {
 			delete(channel.Nicks, nick)
 		}
 	}
 
-	handlers["PART"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["PART"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 1 {
+			return
+		}
 		name := strings.ToLower(m.Params[0])
 		nick := m.Prefix.Name
 		if nick == c.Nick {
 			delete(c.Channels, name)
 			if c.removeConfigChannel(name) {
-				c.configChanged("Channels")
+				c.configChanged(e, "Channels")
 			}
 		} else if channel, ok := c.Channels[name]; ok {
 			delete(channel.Nicks, nick)
 		}
 	}
 
-	handlers["QUIT"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["QUIT"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		channels := []string{}
 		nick := m.Prefix.Name
 		for _, channel := range c.Channels {
@@ -163,14 +192,17 @@ func init() {
 				channels = append(channels, channel.Name)
 			}
 		}
-		Multi <- &IRCClientMultiMessage{
+		e.multi = &IRCClientMultiMessage{
 			Message:  m,
 			Id:       c.Id,
 			Channels: channels,
 		}
 	}
 
-	handlers["TOPIC"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["TOPIC"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 2 {
+			return
+		}
 		nick := m.Prefix.Name
 		name := strings.ToLower(m.Params[0])
 		topic := m.Params[1]
@@ -181,7 +213,10 @@ func init() {
 		}
 	}
 
-	handlers["332"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["332"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 3 {
+			return
+		}
 		name := strings.ToLower(m.Params[1])
 		topic := m.Params[2]
 		if channel, ok := c.Channels[name]; ok {
@@ -189,14 +224,22 @@ func init() {
 		}
 	}
 
-	handlers["324"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["324"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 3 {
+			return
+		}
 		name := strings.ToLower(m.Params[1])
 		if channel, ok := c.Channels[name]; ok {
-			channel.Mode = []byte(m.Params[2][1:])
+			if m.Params[2] != "" {
+				channel.Mode = []byte(m.Params[2][1:])
+			}
 		}
 	}
 
-	handlers["333"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["333"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 4 {
+			return
+		}
 		name := strings.ToLower(m.Params[1])
 		if channel, ok := c.Channels[name]; ok {
 			time, _ := strconv.ParseInt(m.Params[3], 10, 64)
@@ -205,24 +248,29 @@ func init() {
 		}
 	}
 
-	handlers["PING"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["PING"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 1 {
+			return
+		}
 		c.Send(fmt.Sprintf("PONG %s", m.Params[0]))
 	}
 
-	handlers["NOTICE"] = func(c *IRCClient, m *IRCMessage) {
-		m.Direct = m.Params[0] == c.Nick
-	}
+	handlers["NOTICE"] = func(c *IRCClient, m *IRCMessage, e *effects) {}
 
-	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage) {
-		m.Direct = m.Params[0] == c.Nick
-		m.Prefix.Self = m.Prefix.User == c.User && m.Prefix.Name == c.Nick
+	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 2 {
+			return
+		}
 		text := m.Params[1]
 		if len(text) >= 7 && text[0:7] == "\x01VERSION" {
 			log.Printf("%v", m)
 		}
 	}
 
-	handlers["NICK"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["NICK"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 1 {
+			return
+		}
 		nick := m.Prefix.Name
 		new_nick := m.Params[0]
 		channels := []string{}
@@ -232,7 +280,7 @@ func init() {
 			if c.requestedNick != "" && strings.EqualFold(new_nick, c.requestedNick) {
 				c.requestedNick = ""
 				c.Config.Nick = new_nick
-				c.configChanged("Nick")
+				c.configChanged(e, "Nick")
 			}
 		}
 		for _, channel := range c.Channels {
@@ -242,20 +290,23 @@ func init() {
 				channels = append(channels, channel.Name)
 			}
 		}
-		Multi <- &IRCClientMultiMessage{
+		e.multi = &IRCClientMultiMessage{
 			Message:  m,
 			Id:       c.Id,
 			Channels: channels,
 		}
 	}
 
-	handlers["CAP"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["CAP"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		if len(m.Params) < 2 {
 			return
 		}
 
 		switch m.Params[1] {
 		case "LS":
+			if len(m.Params) < 3 {
+				return
+			}
 			if m.Params[2] == "*" {
 				if len(m.Params) > 3 {
 					c.CapAdd(strings.Split(m.Params[3], " "))
@@ -265,8 +316,14 @@ func init() {
 				c.CapListDone()
 			}
 		case "ACK":
+			if len(m.Params) < 3 {
+				return
+			}
 			c.CapAck(strings.Split(m.Params[2], " "))
 		case "NAK":
+			if len(m.Params) < 3 {
+				return
+			}
 			c.CapNak(strings.Split(m.Params[2], " "))
 		case "NEW":
 			if len(m.Params) > 3 {
@@ -279,18 +336,24 @@ func init() {
 		}
 	}
 
-	handlers["AUTHENTICATE"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["AUTHENTICATE"] = func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 1 {
+			return
+		}
 		c.SASLAuth(m.Params[0])
 	}
 
 	e := []string{"902", "904", "905", "906"}
 	for _, i := range e {
-		handlers[i] = func(c *IRCClient, m *IRCMessage) {
+		handlers[i] = func(c *IRCClient, m *IRCMessage, e *effects) {
+			if len(m.Params) < 1 {
+				return
+			}
 			c.SASLAuthFailed(m.Params[0])
 		}
 	}
 
-	handlers["903"] = func(c *IRCClient, m *IRCMessage) {
+	handlers["903"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		c.SASLAuthSuccess()
 	}
 }

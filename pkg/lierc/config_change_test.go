@@ -29,19 +29,7 @@ func handle(t *testing.T, c *IRCClient, line string) []*IRCConfigChange {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, savedMulti := ConfigChanges, Multi
-	ConfigChanges, Multi = make(chan *IRCConfigChange, 10), make(chan *IRCClientMultiMessage, 10)
-	defer func() { ConfigChanges, Multi = saved, savedMulti }()
-	c.Message(m)
-	var changes []*IRCConfigChange
-	for {
-		select {
-		case ch := <-ConfigChanges:
-			changes = append(changes, ch)
-		default:
-			return changes
-		}
-	}
+	return c.Message(m).changes
 }
 
 func changed(t *testing.T, changes []*IRCConfigChange) string {

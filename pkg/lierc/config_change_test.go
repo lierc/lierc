@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// a client in #a and #key (joined with a key) as "me", that sends nothing
+// a client in #a and #key (joined with a key) as "me", with no connection
+// or sender, so what its handlers send is dropped
 func configClient() *IRCClient {
 	c := &IRCClient{
 		Id:       "c1",
 		Nick:     "me",
 		Config:   &IRCConfig{Nick: "me", Channels: []string{"#a", "#key secret"}},
 		Channels: map[string]*IRCChannel{},
-		irc:      &IRCConn{},
 	}
 	for _, name := range []string{"#a", "#key"} {
 		c.Channels[name] = &IRCChannel{Name: name, Topic: &IRCTopic{}, Nicks: map[string][]byte{"me": {}, "bob": {}}}

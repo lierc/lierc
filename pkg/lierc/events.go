@@ -22,41 +22,22 @@ func init() {
 			return
 		}
 		c.Nick = m.Params[0]
-		c.Welcome()
+		c.Registered = true
+		c.Retries = 0
 	}
 
-	handlers["005"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		for i := 1; i < len(m.Params)-1; i++ {
-			c.Isupport = append(c.Isupport, m.Params[i])
-			if value, ok := strings.CutPrefix(m.Params[i], "PREFIX="); ok {
-				if prefix, ok := parsePrefix(value); ok {
-					c.prefix = prefix
-				}
-			}
+	// The end of registration, when irc-go has the whole ISUPPORT map:
+	// take PREFIX from it, then join, so every NAMES reply sees it.
+	endOfRegistration := func(c *IRCClient, m *IRCMessage, e *effects) {
+		if c.joined {
+			return
 		}
+		c.joined = true
+		c.setPrefix(c.isupport())
+		c.Join()
 	}
-
-	handlers["376"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		c.Welcome()
-	}
-
-	handlers["421"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		if strings.HasPrefix(m.Command, "CAP LS") {
-			c.CapNotSupported()
-		}
-	}
-
-	handlers["422"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		c.Welcome()
-	}
-
-	handlers["433"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		c.NickCollision(m)
-	}
-
-	handlers["437"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		c.NickCollision(m)
-	}
+	handlers["376"] = endOfRegistration
+	handlers["422"] = endOfRegistration
 
 	handlers["353"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		if len(m.Params) < 4 {
@@ -242,13 +223,6 @@ func init() {
 		}
 	}
 
-	handlers["PING"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		if len(m.Params) < 1 {
-			return
-		}
-		c.Send(fmt.Sprintf("PONG %s", m.Params[0]))
-	}
-
 	handlers["NOTICE"] = func(c *IRCClient, m *IRCMessage, e *effects) {}
 
 	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage, e *effects) {
@@ -289,64 +263,5 @@ func init() {
 			Id:       c.Id,
 			Channels: channels,
 		}
-	}
-
-	handlers["CAP"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		if len(m.Params) < 2 {
-			return
-		}
-
-		switch m.Params[1] {
-		case "LS":
-			if len(m.Params) < 3 {
-				return
-			}
-			if m.Params[2] == "*" {
-				if len(m.Params) > 3 {
-					c.CapAdd(strings.Split(m.Params[3], " "))
-				}
-			} else {
-				c.CapAdd(strings.Split(m.Params[2], " "))
-				c.CapListDone()
-			}
-		case "ACK":
-			if len(m.Params) < 3 {
-				return
-			}
-			c.CapAck(strings.Split(m.Params[2], " "))
-		case "NAK":
-			if len(m.Params) < 3 {
-				return
-			}
-			c.CapNak(strings.Split(m.Params[2], " "))
-		case "NEW":
-			if len(m.Params) > 3 {
-				c.CapAdd(strings.Split(m.Params[3], " "))
-			}
-		case "DEL":
-			if len(m.Params) > 3 {
-				c.CapDel(strings.Split(m.Params[3], " "))
-			}
-		}
-	}
-
-	handlers["AUTHENTICATE"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		if len(m.Params) < 1 {
-			return
-		}
-		c.SASLAuth(m.Params[0])
-	}
-
-	for _, i := range []string{"902", "904", "905", "906"} {
-		handlers[i] = func(c *IRCClient, m *IRCMessage, e *effects) {
-			if len(m.Params) < 1 {
-				return
-			}
-			c.SASLAuthFailed(m.Params[0])
-		}
-	}
-
-	handlers["903"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		c.SASLAuthSuccess()
 	}
 }

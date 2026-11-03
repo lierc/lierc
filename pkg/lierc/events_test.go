@@ -54,7 +54,6 @@ func TestHandlersShortParams(t *testing.T) {
 		for pname, prefix := range prefixes {
 			for _, params := range paramSets {
 				c := configClient()
-				c.Caps, c.CapsAcked = map[string]string{}, map[string]struct{}{}
 				before := copyChannels(c.Channels)
 				func() {
 					defer func() {
@@ -74,19 +73,43 @@ func TestHandlersShortParams(t *testing.T) {
 	}
 }
 
-// A malformed PREFIX must neither panic nor replace the one in use.
-func TestIsupportPrefix(t *testing.T) {
+// PREFIX comes from the ISUPPORT map; a missing or malformed one means
+// the default.
+func TestSetPrefix(t *testing.T) {
 	c := configClient()
-	c.prefix = defaultPrefix
-	m, _ := ParseIRCMessage(":s 005 me PREFIX=(ov)@ :are supported")
-	c.Message(m)
-	if !reflect.DeepEqual(c.prefix, defaultPrefix) {
-		t.Errorf("malformed PREFIX replaced prefix: %q", c.prefix)
+	for _, tc := range []struct {
+		isupport map[string]string
+		want     [][]byte
+	}{
+		{nil, defaultPrefix},
+		{map[string]string{"NETWORK": "x"}, defaultPrefix},
+		{map[string]string{"PREFIX": "(ov)@"}, defaultPrefix},
+		{map[string]string{"PREFIX": ""}, defaultPrefix},
+		{map[string]string{"PREFIX": "(qov)~@+"}, [][]byte{{'~', 'q'}, {'@', 'o'}, {'+', 'v'}}},
+	} {
+		c.prefix = [][]byte{{'!', 'z'}}
+		c.setPrefix(tc.isupport)
+		if !reflect.DeepEqual(c.prefix, tc.want) {
+			t.Errorf("%v: prefix %q, want %q", tc.isupport, c.prefix, tc.want)
+		}
 	}
-	m, _ = ParseIRCMessage(":s 005 me PREFIX=(qov)~@+ :are supported")
+}
+
+// The end of registration joins the config's channels once, and with no
+// connection uses the default prefix.
+func TestEndOfRegistration(t *testing.T) {
+	c := configClient()
+	c.prefix = [][]byte{{'!', 'z'}}
+	m, _ := ParseIRCMessage(":s 376 me :End of MOTD")
 	c.Message(m)
-	if want := [][]byte{{'~', 'q'}, {'@', 'o'}, {'+', 'v'}}; !reflect.DeepEqual(c.prefix, want) {
-		t.Errorf("prefix %q, want %q", c.prefix, want)
+	if !c.joined || !reflect.DeepEqual(c.prefix, defaultPrefix) {
+		t.Errorf("joined %v prefix %q", c.joined, c.prefix)
+	}
+	c.prefix = [][]byte{{'!', 'z'}}
+	m, _ = ParseIRCMessage(":s 422 me :No MOTD")
+	c.Message(m)
+	if !reflect.DeepEqual(c.prefix, [][]byte{{'!', 'z'}}) {
+		t.Error("a second end of registration ran again")
 	}
 }
 

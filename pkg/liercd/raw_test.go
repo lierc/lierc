@@ -35,3 +35,24 @@ func TestIsMessage(t *testing.T) {
 		}
 	}
 }
+
+// Only a message that was queued is echoed, and only when the server
+// won't echo it: one dropped while disconnected was never sent.
+func TestShouldEcho(t *testing.T) {
+	for _, tc := range []struct {
+		line              string
+		queued, echoAcked bool
+		want              bool
+	}{
+		{"PRIVMSG #a :hi", true, false, true},
+		{"PRIVMSG #a :hi", false, false, false},
+		{"PRIVMSG #a :hi", true, true, false},
+		{"PRIVMSG #a :hi", false, true, false},
+		{"NOTICE #a :hi", true, false, true},
+		{"JOIN #a", true, false, false},
+	} {
+		if got := shouldEcho(tc.line, tc.queued, tc.echoAcked); got != tc.want {
+			t.Errorf("%q queued %v acked %v: %v, want %v", tc.line, tc.queued, tc.echoAcked, got, tc.want)
+		}
+	}
+}

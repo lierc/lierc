@@ -105,7 +105,10 @@ func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientM
 }
 
 func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
+	// the handlers change these with c locked
+	c.RLock()
 	prefix := ":" + c.Nick + "!" + c.User + "@" + c.Host
+	c.RUnlock()
 	message, err := lierc.ParseIRCMessage(prefix + " " + line)
 
 	if err != nil {
@@ -120,7 +123,9 @@ func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRC
 }
 
 func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
+	c.RLock()
 	var line = fmt.Sprintf("CREATE %s :%s", c.Nick, c.Config.Display())
+	c.RUnlock()
 	message, err := lierc.ParseIRCMessage(line)
 
 	if err != nil {
@@ -254,13 +259,14 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 
 		line := string(raw)
 		// through irc-go, so it doesn't later change the nick back
+		queued := false
 		if nick, ok := requestedNick(line); ok {
 			c.ChangeNick(nick)
 		} else {
-			c.Send(line)
+			queued = c.Send(line)
 		}
 
-		if isMessage(line) && !c.CapEnabled("echo-message") {
+		if shouldEcho(line, queued, c.CapEnabled("echo-message")) {
 			if event := m.PrivmsgEvent(c, line); event != nil {
 				event.Message.Prefix.Self = true
 				lierc.Events <- event
@@ -297,4 +303,12 @@ func requestedNick(line string) (string, bool) {
 func isMessage(line string) bool {
 	f := strings.Fields(line)
 	return len(f) > 0 && (strings.EqualFold(f[0], "PRIVMSG") || strings.EqualFold(f[0], "NOTICE"))
+}
+
+// shouldEcho reports whether a raw line from the API is echoed back as our
+// own message: a PRIVMSG or NOTICE that was queued for the server, which
+// won't echo it (echo-message not acked). A line dropped while
+// disconnected was never sent, so it isn't echoed.
+func shouldEcho(line string, queued, echoAcked bool) bool {
+	return queued && isMessage(line) && !echoAcked
 }

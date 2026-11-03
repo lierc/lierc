@@ -366,7 +366,7 @@ func fastKeepAlive(t *testing.T) {
 	t.Cleanup(func() { ircTimeout, ircKeepAlive = oldTimeout, oldKeepAlive })
 }
 
-// changes is the config changes published so far.
+// changed is the config changes published so far.
 func (d *drained) changed() []*IRCConfigChange {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -568,4 +568,81 @@ func TestNickResetOnReconnect(t *testing.T) {
 	fc.expect(t, "CAP END")
 	fc.welcome("me")
 	waitRegistered(t, c)
+}
+
+// The acked caps are known from 001, before the end of registration, and
+// kept while reconnecting, so the manager doesn't echo messages itself;
+// a message sent while disconnected isn't queued, so it isn't echoed.
+func TestAckedCapsKept(t *testing.T) {
+	fastRetries(t)
+	retryUnit = time.Hour
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.expect(t, "CAP LS")
+	fc.send(":s CAP * LS :echo-message message-tags")
+	fc.send(":s CAP * ACK :echo-message")
+	fc.send(":s CAP * ACK :message-tags")
+	fc.expect(t, "CAP END")
+	fc.send(":s 001 me :Welcome")
+	eventually(t, "echo-message after 001", func() bool { return c.CapEnabled("echo-message") })
+	if queued := c.Send("PRIVMSG #a :during registration"); !queued {
+		t.Error("Send while connected wasn't queued")
+	}
+	fc.send(":s 376 me :End of MOTD")
+	waitRegistered(t, c)
+
+	fc.close()
+	d.nextMessage(t, "Reconnecting in 1h0m0s")
+	if !c.CapEnabled("echo-message") {
+		t.Error("echo-message forgotten while disconnected")
+	}
+	if c.Send("PRIVMSG #a :hi") {
+		t.Error("Send while disconnected was queued")
+	}
+}
+
+// An over-long line drops the connection, and the status says why.
+func TestReadQExceeded(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
+	fc.Write([]byte(":s PRIVMSG me :" + strings.Repeat("x", 9000)))
+	s := d.next(t, "disconnected", disconnected)
+	if !strings.Contains(s.Message, "readQ") {
+		t.Errorf("status %q", s.Message)
+	}
+}
+
+// A nick request pending when the connection drops doesn't carry over:
+// a refusal on the next connection leaves the nick alone.
+func TestNickRequestClearedOnReconnect(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
+	c.ChangeNick("taken")
+	fc.expect(t, "NICK taken")
+	fc.close()
+	d.nextMessage(t, "Reconnecting in 20ms")
+
+	fc = srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
+	fc.send(":s 433 me taken :in use")
+	fc.expectNo(t, "NICK", 300*time.Millisecond)
+	c.RLock()
+	requested, before := c.requestedNick, c.nickBeforeRequest
+	c.RUnlock()
+	if requested != "" || before != "" {
+		t.Errorf("requestedNick %q nickBeforeRequest %q", requested, before)
+	}
 }

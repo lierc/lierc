@@ -55,16 +55,18 @@ func (s *sender) run() {
 	}
 }
 
-// Send queues line without blocking; when the queue is full or the sender
-// is stopped the line is dropped.
-func (s *sender) Send(line string) {
+// Send queues line without blocking and reports whether it did; when the
+// queue is full or the sender is stopped the line is dropped.
+func (s *sender) Send(line string) bool {
 	if s.ctx.Err() != nil {
-		return
+		return false
 	}
 	select {
 	case s.queue <- line:
+		return true
 	default:
 		log.Printf("%s send queue full, dropping", s.id)
+		return false
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/ergochat/irc-go/ircevent"
 	"github.com/ergochat/irc-go/ircmsg"
+	"github.com/ergochat/irc-go/ircreader"
 )
 
 var hostname, _ = os.Hostname()
@@ -50,6 +51,14 @@ var (
 	ircLogOutput io.Writer = os.Stderr
 )
 
+// ircMaxLineLen is irc-go's line length; its reader gives up with
+// ircreader.ErrReadQ after this plus 8192 bytes (for tags) without a
+// newline.
+const (
+	ircMaxLineLen = 512
+	readQLimit    = ircMaxLineLen + 8192
+)
+
 // backoff is how long to wait before reconnect attempt number retries.
 func backoff(retries int) time.Duration {
 	if retries > 20 {
@@ -60,6 +69,10 @@ func backoff(retries int) time.Duration {
 
 type IRCClient struct {
 	sync.RWMutex
+	// statusMu orders status publishing: held (before c's lock, never
+	// inside it) from deciding a status until it's sent, so a "Reconnecting
+	// in" can't follow Destroy's "Closing connection"
+	statusMu      sync.Mutex
 	Id            string
 	Config        *IRCConfig
 	Channels      map[string]*IRCChannel
@@ -87,8 +100,10 @@ type IRCClient struct {
 	socket      net.Conn
 	attemptDone chan struct{}
 	cancelDial  context.CancelFunc
-	ackedCaps   map[string]string // conn.AcknowledgedCaps(), once Connect has returned
-	joined      bool              // config channels joined on this attempt
+	// a copy of conn.AcknowledgedCaps() from 001, kept between attempts so
+	// the manager doesn't echo messages itself while we're reconnecting
+	ackedCaps map[string]string
+	joined    bool // config channels joined on this attempt
 
 	// sender is the current attempt's send queue, set only while
 	// connected, so Send drops lines while disconnected. It's atomic
@@ -171,7 +186,7 @@ func (c *IRCClient) connect() {
 		KeepAlive:   ircKeepAlive,
 		QuitMessage: "bye",
 		// set so Connect doesn't fill it in while Destroy's Quit reads it
-		MaxLineLen: 512,
+		MaxLineLen: ircMaxLineLen,
 		Log:        c.log,
 		Debug:      c.debug > 1,
 	}
@@ -207,11 +222,11 @@ func (c *IRCClient) connect() {
 		// irc-go's own reconnect loop (Loop) is never started, but
 		// marking the connection quit keeps it from ever reconnecting
 		go conn.Quit()
-		msg := "Disconnected"
+		msg, detail := "Disconnected", "no socket error (ping timeout, readQ or server ERROR)"
 		if err := socket.err(); err != nil {
-			msg = err.Error()
+			msg, detail = err.Error(), err.Error()
 		}
-		c.endAttempt(conn, s, msg)
+		c.endAttempt(conn, s, msg, "disconnected: "+detail)
 	})
 
 	c.conn = conn
@@ -220,7 +235,8 @@ func (c *IRCClient) connect() {
 	c.Nick = config.Nick
 	c.attemptDone = make(chan struct{})
 	c.cancelDial = cancel
-	c.ackedCaps = nil
+	c.requestedNick = ""
+	c.nickBeforeRequest = ""
 	c.Registered = false
 	c.joined = false
 	c.prefix = defaultPrefix
@@ -233,20 +249,32 @@ func (c *IRCClient) connect() {
 	err := conn.Connect()
 	cancel()
 	if err != nil {
-		c.endAttempt(conn, s, err.Error())
+		// a socket error (readQ, say) says more than "Disconnected by server"
+		if err == ircevent.ServerDisconnected && socket != nil && socket.err() != nil {
+			err = socket.err()
+		}
+		c.endAttempt(conn, s, err.Error(), "connection failed: "+err.Error())
 		return
 	}
 
-	// irc-go writes the acked caps during the handshake, which has
-	// finished now; it doesn't change them after
+	// irc-go has finished the handshake, so its acked caps are final;
+	// refresh the 001 copy for a server that registered without 001
 	c.Lock()
 	if c.conn == conn {
-		c.ackedCaps = make(map[string]string)
-		for k, v := range conn.AcknowledgedCaps() {
-			c.ackedCaps[k] = v
-		}
+		c.copyAckedCaps()
 	}
 	c.Unlock()
+}
+
+// copyAckedCaps copies the connection's acked caps. c is locked and
+// c.conn is set. irc-go writes them before CAP END, so they're final
+// once 001 arrives.
+func (c *IRCClient) copyAckedCaps() {
+	caps := make(map[string]string)
+	for k, v := range c.conn.AcknowledgedCaps() {
+		caps[k] = v
+	}
+	c.ackedCaps = caps
 }
 
 // onConnected runs once the socket (and TLS) is up, before registration.
@@ -268,7 +296,8 @@ func (c *IRCClient) onConnected(conn *ircevent.Connection, s *sender, sock net.C
 // the disconnect callback can both report the same end. It publishes
 // the disconnected status and, unless quitting, schedules the next
 // attempt, then closes attemptDone.
-func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg string) {
+// logMsg is logged at the default level.
+func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg, logMsg string) {
 	c.sender.CompareAndSwap(s, nil)
 	s.Stop()
 
@@ -281,18 +310,22 @@ func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg string)
 	c.conn = nil
 	c.socket = nil
 	c.cancelDial = nil
-	c.ackedCaps = nil
 	c.Registered = false
 	c.Unlock()
 
+	c.log.Print(logMsg)
 	if sock != nil {
 		sock.Close()
 	}
 	c.setStatus(false, msg)
 
+	// decide and publish under statusMu: Destroy, setting quitting, either
+	// comes first (no reconnect) or publishes after this
+	c.statusMu.Lock()
 	c.Lock()
 	if c.quitting {
 		c.Unlock()
+		c.statusMu.Unlock()
 		close(done)
 		return
 	}
@@ -303,22 +336,31 @@ func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg string)
 		<-done
 		c.connect()
 	})
+	c.Connected = false
+	c.StatusMessage = fmt.Sprintf("Reconnecting in %s", delay)
+	status := c.Status()
 	c.Unlock()
-
-	c.setStatus(false, fmt.Sprintf("Reconnecting in %s", delay))
+	c.sendStatus(status)
+	c.statusMu.Unlock()
 	close(done)
 }
 
 // setStatus updates the status and publishes it; c must be unlocked.
 func (c *IRCClient) setStatus(connected bool, msg string) {
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
 	c.Lock()
 	c.Connected = connected
 	c.StatusMessage = msg
 	status := c.Status()
 	c.Unlock()
+	c.sendStatus(status)
+}
 
+// sendStatus publishes status; statusMu is held and c is unlocked.
+func (c *IRCClient) sendStatus(status *IRCClientStatus) {
 	if c.debug > 0 {
-		c.log.Print(msg)
+		c.log.Print(status.Message)
 	}
 	Status <- status
 }
@@ -326,7 +368,10 @@ func (c *IRCClient) setStatus(connected bool, msg string) {
 // onLine gets every line from the server, after irc-go's own handlers.
 func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 	if err != nil {
-		c.log.Printf("unparseable line %q: %v", raw, err)
+		// irc-go has logged it already
+		if c.debug > 0 {
+			c.log.Printf("unparseable line %q: %v", raw, err)
+		}
 		return
 	}
 	msg := newIRCMessage(raw, m)
@@ -338,15 +383,18 @@ func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 // returns once the connection has ended. A server that ignores QUIT has
 // its socket closed after destroyTimeout.
 func (c *IRCClient) Destroy() {
+	c.statusMu.Lock()
 	c.Lock()
 	c.quitting = true
 	if c.timer != nil {
 		c.timer.Stop()
 	}
-	conn, done, cancel, connected := c.conn, c.attemptDone, c.cancelDial, c.Connected
+	conn, done, cancel := c.conn, c.attemptDone, c.cancelDial
+	c.StatusMessage = "Closing connection"
+	status := c.Status()
 	c.Unlock()
-
-	c.setStatus(connected, "Closing connection")
+	c.sendStatus(status)
+	c.statusMu.Unlock()
 
 	if cancel != nil {
 		cancel()
@@ -385,14 +433,16 @@ func (c *IRCClient) Status() *IRCClientStatus {
 	}
 }
 
-// Send queues line for the server; it's dropped when not connected.
-func (c *IRCClient) Send(line string) {
+// Send queues line for the server and reports whether it did: it's
+// dropped when not connected or when the queue is full.
+func (c *IRCClient) Send(line string) bool {
 	if c.debug > 1 {
 		c.log.Printf("---> %s", line)
 	}
 	if s := c.sender.Load(); s != nil {
-		s.Send(line)
+		return s.Send(line)
 	}
+	return false
 }
 
 func (c *IRCClient) PortMap() (error, string, string) {
@@ -478,11 +528,14 @@ func (c *IRCClient) CapEnabled(name string) bool {
 }
 
 // trackedConn records the first read or write error on the socket, for
-// the disconnected status (irc-go doesn't expose its last error).
+// the disconnected status (irc-go doesn't expose its last error). It
+// also records ircreader.ErrReadQ when readQLimit bytes arrive without a
+// newline, which irc-go's reader fails on without a socket error.
 type trackedConn struct {
 	net.Conn
-	mu    sync.Mutex
-	first error
+	mu      sync.Mutex
+	first   error
+	pending int // bytes since the last newline; only the reader touches it
 }
 
 func (t *trackedConn) record(err error) {
@@ -501,6 +554,14 @@ func (t *trackedConn) err() error {
 
 func (t *trackedConn) Read(b []byte) (int, error) {
 	n, err := t.Conn.Read(b)
+	if i := bytes.LastIndexByte(b[:n], '\n'); i != -1 {
+		t.pending = n - i - 1
+	} else {
+		t.pending += n
+	}
+	if t.pending >= readQLimit {
+		t.record(ircreader.ErrReadQ)
+	}
 	if err != nil {
 		t.record(err)
 	}
@@ -599,8 +660,8 @@ func (c *IRCClient) ClientData() *IRCClientData {
 	}
 }
 
-// capsAcked is the caps the server acknowledged, nil when there's no
-// connection.
+// capsAcked is the caps the server acknowledged on the last connection
+// to register, nil before any has.
 func (c *IRCClient) capsAcked() []string {
 	var caps []string
 	for k := range c.ackedCaps {

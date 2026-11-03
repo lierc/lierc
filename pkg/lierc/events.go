@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ergochat/irc-go/ircevent"
 	"github.com/ergochat/irc-go/ircmsg"
 )
 
@@ -318,4 +319,62 @@ func (c *IRCClient) onNick(m ircmsg.Message, e *effects) {
 		}
 	}
 	e.multi = multiMessage(c, m, channels)
+}
+
+// onLine gets every line from the server, after irc-go's own handlers.
+func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
+	if err != nil {
+		// irc-go has logged it already
+		if c.debug > 0 {
+			c.log.Printf("unparseable line %q: %v", raw, err)
+		}
+		return
+	}
+	msg := newIRCMessage(m)
+	c.Lock()
+	c.annotate(msg)
+	c.Unlock()
+	Events <- &IRCClientMessage{Id: c.Id, Message: msg}
+}
+
+// run runs h for m with c locked, and returns what h wants published;
+// pass it to publishEffects once c is unlocked. A message from a
+// connection that's no longer c's is ignored.
+func (c *IRCClient) run(conn *ircevent.Connection, h handler, m ircmsg.Message) effects {
+	c.Lock()
+	// deferred, so a handler that panics (irc-go recovers it) can't
+	// leave c locked
+	defer c.Unlock()
+
+	var e effects
+	if c.conn == conn {
+		h(c, m, &e)
+	}
+	return e
+}
+
+// annotate marks a PRIVMSG or NOTICE sent to our nick as Direct, and a
+// PRIVMSG from us as Self. c is locked.
+func (c *IRCClient) annotate(m *IRCMessage) {
+	if m.Prefix == nil {
+		m.Prefix = &IRCPrefix{}
+	}
+	if (m.Command == "PRIVMSG" || m.Command == "NOTICE") && len(m.Params) > 0 {
+		nick := c.currentNick()
+		m.Direct = m.Params[0] == nick
+		if m.Command == "PRIVMSG" {
+			m.Prefix.Self = m.Prefix.Name != "" && m.Prefix.User == c.User && m.Prefix.Name == nick
+		}
+	}
+}
+
+// publishEffects sends the multi message and config changes e holds. c
+// must be unlocked: the channels may block.
+func (c *IRCClient) publishEffects(e effects) {
+	if e.multi != nil {
+		Multi <- e.multi
+	}
+	for _, change := range e.changes {
+		ConfigChanges <- change
+	}
 }

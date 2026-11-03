@@ -83,7 +83,7 @@ func (c *IRCClient) connect() {
 		conn.Password = config.Pass
 	}
 
-	s := newSender(c.Id, conn.SendRaw)
+	s := newSender(c.log, c.debug, conn.SendRaw)
 
 	// Destroy cancels a dial still in progress
 	dialCtx, cancel := context.WithCancel(context.Background())
@@ -177,6 +177,10 @@ func (c *IRCClient) copyAckedCaps() {
 
 // onConnected runs once the socket (and TLS) is up, before registration.
 func (c *IRCClient) onConnected(conn *ircevent.Connection, s *sender, sock net.Conn) {
+	// decide and publish under statusMu, like endAttempt: Destroy either
+	// comes first (we don't register) or publishes after "Connected"
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
 	c.Lock()
 	if c.conn != conn || c.quitting {
 		// Destroy came first: end the attempt rather than register
@@ -185,10 +189,20 @@ func (c *IRCClient) onConnected(conn *ircevent.Connection, s *sender, sock net.C
 		return
 	}
 	c.socket = sock
+	c.Connected = true
+	c.StatusMessage = "Connected"
+	status := c.Status()
 	c.Unlock()
 	c.sender.Store(s)
-	c.setStatus(true, "Connected")
+	if testHookConnected != nil {
+		testHookConnected()
+	}
+	c.sendStatus(status)
 }
+
+// testHookConnected, when set by a test, runs in onConnected after it has
+// decided to publish "Connected" and before it does.
+var testHookConnected func()
 
 // endAttempt ends the attempt conn belongs to, once: Connect's error and
 // the disconnect callback can both report the same end. It publishes

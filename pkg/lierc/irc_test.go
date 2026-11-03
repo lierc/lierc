@@ -254,9 +254,12 @@ func TestDropDuringRegistrationReconnects(t *testing.T) {
 	srv.accept(t)
 }
 
+// Destroy while waiting to reconnect returns at once, and the reconnect
+// never happens: the wait is short, so a reconnect Destroy failed to
+// cancel would arrive well inside noAccept's window.
 func TestDestroyWhileSleeping(t *testing.T) {
 	fastRetries(t)
-	retryUnit = time.Hour
+	retryUnit = 200 * time.Millisecond
 	srv := newFakeServer(t)
 	d := drain(t)
 	c := newTestClient(t, srv.config("me"))
@@ -264,14 +267,14 @@ func TestDestroyWhileSleeping(t *testing.T) {
 	fc.register(t, "me")
 	waitRegistered(t, c)
 	fc.close()
-	d.nextMessage(t, "Reconnecting in 1h0m0s")
+	d.nextMessage(t, "Reconnecting in 200ms")
 
 	start := time.Now()
 	c.Destroy()
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
 		t.Errorf("Destroy took %s", elapsed)
 	}
-	srv.noAccept(t, 100*time.Millisecond)
+	srv.noAccept(t, 3*retryUnit)
 }
 
 func TestDestroyDuringRegistration(t *testing.T) {
@@ -287,6 +290,83 @@ func TestDestroyDuringRegistration(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > destroyTimeout+time.Second {
 		t.Errorf("Destroy took %s", elapsed)
 	}
+	// retries are 20ms apart, so a reconnect would be well inside this
+	srv.noAccept(t, 200*time.Millisecond)
+}
+
+// A Destroy that starts while a connection is publishing "Connected"
+// publishes "Closing connection" after it, not before. The hook runs
+// Destroy at the moment the old code was exposed: after onConnected had
+// decided to publish, before it did.
+func TestDestroyOrderedAfterConnected(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	client := make(chan *IRCClient, 1)
+	var once sync.Once
+	destroyed := make(chan struct{})
+	testHookConnected = func() {
+		once.Do(func() {
+			c := <-client
+			go func() {
+				c.Destroy()
+				close(destroyed)
+			}()
+			// let Destroy run as far as it can before we publish
+			time.Sleep(100 * time.Millisecond)
+		})
+	}
+	t.Cleanup(func() { testHookConnected = nil })
+	// NewIRCClient connects in the background, so the hook can't run
+	// before the client is handed over
+	client <- newTestClient(t, srv.config("me"))
+	srv.accept(t)
+	select {
+	case <-destroyed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Destroy didn't return")
+	}
+
+	msgs := d.messages()
+	connected, closing := -1, -1
+	for i, m := range msgs {
+		if m == "Connected" && connected < 0 {
+			connected = i
+		}
+		if m == "Closing connection" && closing < 0 {
+			closing = i
+		}
+	}
+	if connected < 0 || closing < 0 || closing < connected {
+		t.Errorf("statuses %q: want Connected before Closing connection", msgs)
+	}
+}
+
+// Destroy during a dial that hasn't finished (here a TLS handshake the
+// server never answers) cancels it and returns at once, without
+// "Connected" and without reconnecting.
+func TestDestroyDuringDial(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	config := srv.config("me")
+	config.Ssl = true
+	c := newTestClient(t, config)
+	srv.accept(t)
+	// the handshake is now waiting on a server that won't answer
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	c.Destroy()
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Destroy took %s", elapsed)
+	}
+	for _, m := range d.messages() {
+		if m == "Connected" {
+			t.Errorf("statuses %q include Connected", d.messages())
+		}
+	}
+	srv.noAccept(t, 200*time.Millisecond)
 }
 
 func TestClientDataConcurrent(t *testing.T) {

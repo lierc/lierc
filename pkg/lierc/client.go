@@ -199,6 +199,9 @@ func (c *IRCClient) setPrefix(isupport map[string]string) {
 	}
 }
 
+// CapEnabled reports whether the server acked the cap on the last
+// connection to register. It takes c's read lock: don't call it with c
+// locked (from a handler, say).
 func (c *IRCClient) CapEnabled(name string) bool {
 	c.RLock()
 	defer c.RUnlock()

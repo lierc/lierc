@@ -3,7 +3,6 @@ package lierc
 import (
 	"context"
 	"log"
-	"os"
 	"sync"
 
 	"golang.org/x/time/rate"
@@ -13,27 +12,32 @@ const sendQueueSize = 256
 
 // sender rate-limits our own sends (1/s, burst 4) and never blocks the caller.
 type sender struct {
-	id      string
+	log     *log.Logger
+	debug   int64
 	send    func(line string) error
 	queue   chan string
 	limiter *rate.Limiter
 	ctx     context.Context
 	cancel  context.CancelFunc
-	debug   int64
 	once    sync.Once
+
+	mu      sync.Mutex
+	dropped int // lines dropped since the queue was last accepting
 }
 
-// newSender starts the goroutine that drains the queue through send.
-func newSender(id string, send func(line string) error) *sender {
+// newSender starts the goroutine that drains the queue through send. It
+// logs to logger: dropped sends only when debug > 0, and a full queue
+// once per burst of drops.
+func newSender(logger *log.Logger, debug int64, send func(line string) error) *sender {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &sender{
-		id:      id,
+		log:     logger,
+		debug:   debug,
 		send:    send,
 		queue:   make(chan string, sendQueueSize),
 		limiter: rate.NewLimiter(1, 4),
 		ctx:     ctx,
 		cancel:  cancel,
-		debug:   LogLevel(os.Getenv("LIERC_DEBUG")),
 	}
 	go s.run()
 	return s
@@ -49,7 +53,7 @@ func (s *sender) run() {
 				return
 			}
 			if err := s.send(line); err != nil && s.debug > 0 {
-				log.Printf("%s dropped send: %v", s.id, err)
+				s.log.Printf("dropped send: %v", err)
 			}
 		}
 	}
@@ -61,16 +65,36 @@ func (s *sender) Send(line string) bool {
 	if s.ctx.Err() != nil {
 		return false
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	select {
 	case s.queue <- line:
+		s.logDropped()
 		return true
 	default:
-		log.Printf("%s send queue full, dropping", s.id)
+		if s.dropped == 0 {
+			s.log.Print("send queue full, dropping lines")
+		}
+		s.dropped++
 		return false
+	}
+}
+
+// logDropped reports how many lines a full queue dropped, once it's
+// taking lines again (or the sender stops). s.mu is held.
+func (s *sender) logDropped() {
+	if s.dropped > 0 {
+		s.log.Printf("send queue full: dropped %d lines", s.dropped)
+		s.dropped = 0
 	}
 }
 
 // Stop ends the goroutine; Send after Stop is a no-op.
 func (s *sender) Stop() {
-	s.once.Do(s.cancel)
+	s.once.Do(func() {
+		s.cancel()
+		s.mu.Lock()
+		s.logDropped()
+		s.mu.Unlock()
+	})
 }

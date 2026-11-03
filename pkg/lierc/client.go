@@ -219,11 +219,11 @@ func (c *IRCClient) connect() {
 		return socket, nil
 	}
 	conn.AddRawCallback(c.onLine)
-	for cmd, h := range handlers {
+	eachHandler(func(cmd string, h handler) {
 		conn.AddCallback(cmd, func(m ircmsg.Message) {
 			c.publishEffects(c.run(conn, h, m))
 		})
-	}
+	})
 	conn.AddDisconnectCallback(func(ircmsg.Message) {
 		// irc-go's own reconnect loop (Loop) is never started, but
 		// marking the connection quit keeps it from ever reconnecting

@@ -34,11 +34,18 @@ func handleLine(t *testing.T, c *IRCClient, line string) effects {
 }
 
 func handleMessage(c *IRCClient, m ircmsg.Message) effects {
-	h, ok := handlers[m.Command]
+	h, ok := allHandlers()[m.Command]
 	if !ok {
 		return effects{}
 	}
 	return c.run(c.conn, h, m)
+}
+
+// allHandlers is eachHandler's handlers by command.
+func allHandlers() map[string]handler {
+	all := map[string]handler{}
+	eachHandler(func(cmd string, h handler) { all[cmd] = h })
+	return all
 }
 
 // handle runs line through its handler and returns the config changes it

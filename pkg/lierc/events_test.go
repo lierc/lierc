@@ -28,15 +28,7 @@ func copyChannels(in map[string]*IRCChannel) map[string]*IRCChannel {
 // none at all, it must leave the channels alone.
 func TestHandlersShortParams(t *testing.T) {
 	var cmds []string
-	for cmd := range handlers {
-		cmds = append(cmds, cmd)
-	}
-	sort.Strings(cmds)
-	for _, cmd := range []string{"PRIVMSG", "NOTICE"} {
-		if _, ok := handlers[cmd]; !ok {
-			cmds = append(cmds, cmd)
-		}
-	}
+	eachHandler(func(cmd string, h handler) { cmds = append(cmds, cmd) })
 
 	paramSets := [][]string{
 		{}, {"#a"}, {"#a", "x"},

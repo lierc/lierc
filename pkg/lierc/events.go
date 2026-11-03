@@ -39,6 +39,24 @@ func init() {
 	handlers["376"] = endOfRegistration
 	handlers["422"] = endOfRegistration
 
+	// A nick we asked for after registration was refused: don't let
+	// irc-go keep asking for it. It goes back to wanting the configured
+	// nick, so it still wins that back. Refusals of other nicks (irc-go's
+	// own attempts to win the configured nick back, or registration's
+	// fallbacks) are irc-go's business.
+	refusedNick := func(c *IRCClient, m *IRCMessage, e *effects) {
+		if len(m.Params) < 2 || !c.Registered || c.conn == nil {
+			return
+		}
+		if c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
+			c.requestedNick = ""
+			c.setPreferredNick(c.Config.Nick)
+		}
+	}
+	handlers["432"] = refusedNick
+	handlers["433"] = refusedNick
+	handlers["437"] = refusedNick
+
 	handlers["353"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		if len(m.Params) < 4 {
 			return
@@ -249,6 +267,12 @@ func init() {
 				c.requestedNick = ""
 				c.Config.Nick = new_nick
 				c.configChanged(e, "Nick")
+			} else if c.conn != nil && !strings.EqualFold(new_nick, c.conn.PreferredNick()) {
+				// a server or services rename: keep it, rather than
+				// have irc-go fight to change back. (A match is irc-go
+				// winning its preferred nick back.)
+				c.requestedNick = ""
+				c.setPreferredNick(new_nick)
 			}
 		}
 		for _, channel := range c.Channels {

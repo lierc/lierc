@@ -213,6 +213,8 @@ func (c *IRCClient) connect() {
 
 	c.conn = conn
 	c.socket = nil
+	// until 001 says otherwise, we're the configured nick
+	c.Nick = config.Nick
 	c.attemptDone = make(chan struct{})
 	c.cancelDial = cancel
 	c.ackedCaps = nil
@@ -604,12 +606,27 @@ func (c *IRCClient) capsAcked() []string {
 	return caps
 }
 
-// RequestNick records that we asked the server for nick, so taking it
-// updates the config.
-func (c *IRCClient) RequestNick(nick string) {
+// ChangeNick asks the server for nick: records it as requested and calls
+// conn.SetNick (not a raw NICK, which irc-go would later revert).
+// No-op without a connection.
+func (c *IRCClient) ChangeNick(nick string) {
 	c.Lock()
 	defer c.Unlock()
 	c.requestedNick = nick
+	c.setPreferredNick(nick)
+}
+
+// setPreferredNick makes nick the one irc-go keeps (or tries to win
+// back on its keepalive ticks), and sends NICK nick, which the server
+// ignores when it's our current nick. c is locked, and stays locked
+// while irc-go queues the line: its write queue is buffered and its
+// writer never needs c, so at worst this waits for a stalled socket's
+// write deadline or the connection's end. Keeping the lock orders the
+// handlers' calls with ChangeNick's.
+func (c *IRCClient) setPreferredNick(nick string) {
+	if c.conn != nil {
+		c.conn.SetNick(nick)
+	}
 }
 
 // configChanged publishes the current value of the given config fields.

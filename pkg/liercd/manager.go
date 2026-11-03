@@ -253,11 +253,12 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 
 		line := string(raw)
-		// before sending, so the server's reply can't arrive first
+		// through irc-go, so it doesn't later change the nick back
 		if nick, ok := requestedNick(line); ok {
-			c.RequestNick(nick)
+			c.ChangeNick(nick)
+		} else {
+			c.Send(line)
 		}
-		c.Send(line)
 
 		if isMessage(line) && !c.CapEnabled("echo-message") {
 			if event := m.PrivmsgEvent(c, line); event != nil {

@@ -103,7 +103,7 @@ func TestKickRemovesKickedNick(t *testing.T) {
 // different nick than the one requested.
 func TestNickChangeUpdatesConfig(t *testing.T) {
 	c := configClient()
-	c.RequestNick("new")
+	c.ChangeNick("new")
 	if got, want := changed(t, handle(t, c, ":me!u@h NICK new")), `{"Id":"c1","Config":{"Nick":"new"}}`; got != want {
 		t.Errorf("requested nick: published %s, want %s", got, want)
 	}
@@ -120,17 +120,17 @@ func TestNickChangeUpdatesConfig(t *testing.T) {
 	}
 
 	c = configClient()
-	c.RequestNick("wanted")
+	c.ChangeNick("wanted")
 	if got := changed(t, handle(t, c, ":me!u@h NICK other")); got != "" {
 		t.Errorf("different nick published %s", got)
 	}
-	c.RequestNick("Mixed")
+	c.ChangeNick("Mixed")
 	if got, want := changed(t, handle(t, c, ":other!u@h NICK mixed")), `{"Id":"c1","Config":{"Nick":"mixed"}}`; got != want {
 		t.Errorf("case-insensitive match: published %s, want %s", got, want)
 	}
 
 	c = configClient()
-	c.RequestNick("bob2")
+	c.ChangeNick("bob2")
 	if got := changed(t, handle(t, c, ":bob!u@h NICK bob2")); got != "" {
 		t.Errorf("someone else's nick change published %s", got)
 	}

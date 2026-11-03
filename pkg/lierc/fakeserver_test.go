@@ -101,18 +101,41 @@ type fakeConn struct {
 	r *bufio.Reader
 }
 
+// readLine reads the next line, without its line ending, answering
+// irc-go's keepalive PINGs on the way (an unanswered one is fatal, and
+// tests that shorten ircKeepAlive see them).
+func (fc *fakeConn) readLine() (string, error) {
+	for {
+		line, err := fc.r.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if token, ok := strings.CutPrefix(line, "PING "); ok {
+			fc.send(":s PONG s " + token)
+			continue
+		}
+		return line, nil
+	}
+}
+
 // expect reads lines until one starts with prefix and returns it, failing
 // after 5s.
 func (fc *fakeConn) expect(t *testing.T, prefix string) string {
 	t.Helper()
-	fc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	return fc.expectWithin(t, prefix, 5*time.Second)
+}
+
+// expectWithin is expect, failing after d.
+func (fc *fakeConn) expectWithin(t *testing.T, prefix string, d time.Duration) string {
+	t.Helper()
+	fc.SetReadDeadline(time.Now().Add(d))
 	defer fc.SetReadDeadline(time.Time{})
 	for {
-		line, err := fc.r.ReadString('\n')
+		line, err := fc.readLine()
 		if err != nil {
 			t.Fatalf("waiting for %q: %v", prefix, err)
 		}
-		line = strings.TrimRight(line, "\r\n")
 		if strings.HasPrefix(line, prefix) {
 			return line
 		}
@@ -136,11 +159,10 @@ func (fc *fakeConn) register(t *testing.T, nick string, isupport ...string) {
 	fc.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var sawNick, sawUser bool
 	for {
-		line, err := fc.r.ReadString('\n')
+		line, err := fc.readLine()
 		if err != nil {
 			t.Fatalf("registering: %v", err)
 		}
-		line = strings.TrimRight(line, "\r\n")
 		switch {
 		case strings.HasPrefix(line, "CAP REQ "):
 			caps := strings.TrimPrefix(strings.TrimPrefix(line, "CAP REQ "), ":")

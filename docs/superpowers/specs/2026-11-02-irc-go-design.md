@@ -129,15 +129,26 @@ on join/part/kick; nick only when it's the nick we asked for). Each checks
 State that irc-go tracks is read from it rather than duplicated where the
 output shape allows:
 
-- Current nick: `CurrentNick()`.
-- PREFIX: read from irc-go's `ISupport()["PREFIX"]` when registration
-  completes (376/422; our raw callback runs after irc-go has filled the
-  map), and parsed with a small bounds-checked function (irc-go doesn't
+- Current nick: irc-go's `CurrentNick()`, falling back to `config.Nick`
+  before 001 and between connections; liercd keeps no nick of its own
+  (decided by the user). irc-go follows our own NICK changes before our
+  callback runs, so the NICK handler treats a change as ours when the new
+  nick is `CurrentNick()`.
+- Setup finishes in one step when `Connect()` returns, irc-go's only
+  signal that it has registered (its `registered` flag has no getter):
+  copy the acked caps, read PREFIX, set `Registered`, join
+  `config.Channels`. `Connect()` returns once per attempt, so a later
+  MOTD doesn't rejoin (decided by the user).
+- PREFIX: read from irc-go's `ISupport()["PREFIX"]` in that step, and parsed with a small bounds-checked function (irc-go doesn't
   parse the value). We join only after registration, so every NAMES reply
   sees it. irc-go ignores 005 after registration, so a server changing
   PREFIX mid-session isn't picked up; accepted. Default `(ov)@+` plus `%h`
   as today until then and when the token is missing or malformed.
-- `CapsAcked`: from `AcknowledgedCaps()`.
+- `CapsAcked`: a copy of `AcknowledgedCaps()` taken in that step and kept
+  between attempts. irc-go returns its own map, which its Connect goroutine
+  writes once every CAP REQ is answered or at 376/422; reading it any
+  earlier (at 001, say) can overlap that write with a server that welcomes
+  us early, and concurrent map access kills the process.
 - `Isupport`: built from irc-go's `ISupport()` map when the status JSON is
   produced, not tracked by us (decided by the user). Each entry becomes
   `KEY` (empty value) or `KEY=value`, re-escaping backslash, space and `=`
@@ -152,11 +163,11 @@ output shape allows:
   CAP tracking (decided by the user). irc-go keeps advertised caps privately
   with no getter, and nothing reads the field: lierc-api's Go status struct
   has no `Caps` field and no Perl or UI code reads it.
-- `Registered`: set when 001, 376 or 422 arrives (our own handler; irc-go's
-  connect callback is 376/422 only), which also resets the retry count and
-  joins `config.Channels`, as `Welcome` does today.
-- `Nick` in the status JSON: `CurrentNick()`, falling back to the preferred
-  nick before 001, when `CurrentNick()` is empty.
+- `Registered`: set in that step, so it means "set up", like irc-go's own
+  flag, not "got 001" (decided by the user). 001 still resets the retry
+  count. lierc-api replays a connection's 001/005/CAP state only once it's
+  Registered, so a UI opened mid-MOTD gets the live lines instead.
+- `Nick` in the status JSON: the current nick above.
 
 ### Sending
 
@@ -187,7 +198,19 @@ doesn't repeat a refused request forever or fight services:
   server confirms a nick we asked for.
 
 The manager's "echo the PRIVMSG/NOTICE locally when echo-message isn't
-acked" path stays, reading acked caps from irc-go.
+acked" path stays, reading the acked-caps copy, and only for a line that
+was queued (one dropped while disconnected was never sent).
+
+Until the connection is `Registered`, the command API refuses a PRIVMSG,
+NOTICE or NICK (parsed, so tags and a prefix don't hide the command) with
+409 Conflict and the body "Not connected yet, try again in a moment"
+(decided by the user). Before then we can't tell whether the server echoes
+messages, so echoing ourselves could duplicate them, and a nick change
+couldn't be saved reliably. lierc-api turns any non-200 into an error the
+UI shows; the UI has already put the line in its input history. Typing
+notifications (TAGMSG) and other lines are not refused: the UI alerts on
+every failed send, and they're sent when connected and dropped otherwise,
+as before.
 
 ### Reconnects and status
 
@@ -254,6 +277,11 @@ happens under the lock.
 - `go vet` and `go test -race ./...` clean.
 
 ## Behaviour changes to expect
+
+- A message or nick change sent from the UI while the connection is down or
+  still registering is refused with an error ("Not connected yet, try again
+  in a moment") instead of being dropped silently.
+- `Registered` in the status JSON turns true at the end of MOTD, not 001.
 
 - `Isupport` in the status JSON is in map order, ignores a 005 sent after
   registration, and turns a server's `\x2C` into a plain comma.

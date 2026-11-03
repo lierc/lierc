@@ -72,13 +72,15 @@ type IRCClient struct {
 	// statusMu orders status publishing: held (before c's lock, never
 	// inside it) from deciding a status until it's sent, so a "Reconnecting
 	// in" can't follow Destroy's "Closing connection"
-	statusMu      sync.Mutex
-	Id            string
-	Config        *IRCConfig
-	Channels      map[string]*IRCChannel
-	Nick          string
-	User          string
-	Host          string
+	statusMu sync.Mutex
+	Id       string
+	Config   *IRCConfig
+	Channels map[string]*IRCChannel
+	User     string
+	Host     string
+	// Registered is set once irc-go has finished registering (Connect has
+	// returned) and the connection is set up; the API's messages are
+	// refused until then
 	Registered    bool
 	Connected     bool
 	StatusMessage string
@@ -100,12 +102,10 @@ type IRCClient struct {
 	socket      net.Conn
 	attemptDone chan struct{}
 	cancelDial  context.CancelFunc
-	// a copy of conn.AcknowledgedCaps() taken when Connect returns, kept
-	// between attempts so the manager doesn't echo messages itself while
-	// we're reconnecting. Until the first Connect returns it's empty, so a
-	// message sent during the first MOTD may be echoed twice.
+	// a copy of conn.AcknowledgedCaps() taken when Connect returns
+	// (finishSetup), kept between attempts. The API's messages are refused
+	// until then, so it's always known whether the server echoes them.
 	ackedCaps map[string]string
-	joined    bool // config channels joined on this attempt
 
 	// sender is the current attempt's send queue, set only while
 	// connected, so Send drops lines while disconnected. It's atomic
@@ -149,7 +149,6 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		Channels:      make(map[string]*IRCChannel),
 		StatusMessage: "Connecting",
 		debug:         LogLevel(os.Getenv("LIERC_DEBUG")),
-		Nick:          config.Nick,
 		User:          config.User,
 		Host:          hostname,
 		Id:            Id,
@@ -233,15 +232,11 @@ func (c *IRCClient) connect() {
 
 	c.conn = conn
 	c.socket = nil
-	// until 001 says otherwise, we're the configured nick
-	c.Nick = config.Nick
 	c.attemptDone = make(chan struct{})
 	c.cancelDial = cancel
 	c.requestedNick = ""
 	c.nickBeforeRequest = ""
 	c.Registered = false
-	c.joined = false
-	c.prefix = defaultPrefix
 	c.Unlock()
 
 	if c.debug > 0 {
@@ -259,12 +254,23 @@ func (c *IRCClient) connect() {
 		return
 	}
 
-	// irc-go has finished the handshake, so its acked caps are final
 	c.Lock()
 	if c.conn == conn {
-		c.copyAckedCaps()
+		c.finishSetup()
 	}
 	c.Unlock()
+}
+
+// finishSetup runs once per connection, when Connect has returned: irc-go
+// has registered, and its acked caps and ISUPPORT are final. c is locked
+// and c.conn is the connection. Everything that waits for registration
+// happens here together, so the API is never let in before we know
+// whether the server echoes our messages.
+func (c *IRCClient) finishSetup() {
+	c.copyAckedCaps()
+	c.setPrefix(c.isupport())
+	c.Registered = true
+	c.Join()
 }
 
 // copyAckedCaps copies the connection's acked caps. c is locked and
@@ -472,9 +478,10 @@ func (c *IRCClient) Message(m *IRCMessage) effects {
 		m.Prefix = &IRCPrefix{}
 	}
 	if (m.Command == "PRIVMSG" || m.Command == "NOTICE") && len(m.Params) > 0 {
-		m.Direct = m.Params[0] == c.Nick
+		nick := c.currentNick()
+		m.Direct = m.Params[0] == nick
 		if m.Command == "PRIVMSG" {
-			m.Prefix.Self = m.Prefix.Name != "" && m.Prefix.User == c.User && m.Prefix.Name == c.Nick
+			m.Prefix.Self = m.Prefix.Name != "" && m.Prefix.User == c.User && m.Prefix.Name == nick
 		}
 	}
 	if handler, ok := handlers[m.Command]; ok {
@@ -494,6 +501,42 @@ func (c *IRCClient) publish(m *IRCMessage, e effects) {
 	for _, change := range e.changes {
 		ConfigChanges <- change
 	}
+}
+
+// currentNick is our nick on the server, as irc-go has it (set at 001,
+// following our NICK changes), or the configured nick before 001 and
+// between connections. c is locked.
+func (c *IRCClient) currentNick() string {
+	if c.conn != nil {
+		if nick := c.conn.CurrentNick(); nick != "" {
+			return nick
+		}
+	}
+	return c.Config.Nick
+}
+
+// IsRegistered reports whether the connection is set up (see
+// Registered). Don't call it with c locked.
+func (c *IRCClient) IsRegistered() bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.Registered
+}
+
+// CurrentNick is our nick on the server, or the configured nick when
+// there isn't one yet. Don't call it with c locked.
+func (c *IRCClient) CurrentNick() string {
+	c.RLock()
+	defer c.RUnlock()
+	return c.currentNick()
+}
+
+// Source is our nick!user@host, for messages we echo ourselves. Don't
+// call it with c locked.
+func (c *IRCClient) Source() string {
+	c.RLock()
+	defer c.RUnlock()
+	return c.currentNick() + "!" + c.User + "@" + c.Host
 }
 
 // Join joins the config's channels. c is locked.
@@ -647,15 +690,10 @@ func (c *IRCClient) ClientData() *IRCClientData {
 		channels = append(channels, data)
 	}
 
-	nick := c.Nick
-	if nick == "" {
-		nick = c.Config.Nick
-	}
-
 	return &IRCClientData{
 		Id:         c.Id,
 		Config:     c.Config,
-		Nick:       nick,
+		Nick:       c.currentNick(),
 		Channels:   channels,
 		Registered: c.Registered,
 		Status:     c.Status(),

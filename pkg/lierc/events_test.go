@@ -95,24 +95,6 @@ func TestSetPrefix(t *testing.T) {
 	}
 }
 
-// The end of registration joins the config's channels once, and with no
-// connection uses the default prefix.
-func TestEndOfRegistration(t *testing.T) {
-	c := configClient()
-	c.prefix = [][]byte{{'!', 'z'}}
-	m, _ := ParseIRCMessage(":s 376 me :End of MOTD")
-	c.Message(m)
-	if !c.joined || !reflect.DeepEqual(c.prefix, defaultPrefix) {
-		t.Errorf("joined %v prefix %q", c.joined, c.prefix)
-	}
-	c.prefix = [][]byte{{'!', 'z'}}
-	m, _ = ParseIRCMessage(":s 422 me :No MOTD")
-	c.Message(m)
-	if !reflect.DeepEqual(c.prefix, [][]byte{{'!', 'z'}}) {
-		t.Error("a second end of registration ran again")
-	}
-}
-
 func TestMessageEffects(t *testing.T) {
 	parse := func(line string) *IRCMessage {
 		m, err := ParseIRCMessage(line)
@@ -154,7 +136,7 @@ func TestMessageEffects(t *testing.T) {
 
 	// a line with no prefix is never Self, even for a client with no nick
 	blank := configClient()
-	blank.Nick, blank.User = "", ""
+	blank.Config.Nick, blank.User = "", ""
 	m = parse("PRIVMSG #a :hi")
 	blank.Message(m)
 	if m.Prefix.Self {

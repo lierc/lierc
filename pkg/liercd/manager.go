@@ -105,11 +105,7 @@ func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientM
 }
 
 func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
-	// the handlers change these with c locked
-	c.RLock()
-	prefix := ":" + c.Nick + "!" + c.User + "@" + c.Host
-	c.RUnlock()
-	message, err := lierc.ParseIRCMessage(prefix + " " + line)
+	message, err := lierc.ParseIRCMessage(":" + c.Source() + " " + line)
 
 	if err != nil {
 		log.Printf("[Manager] unparseable event %q: %v", line, err)
@@ -123,9 +119,7 @@ func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRC
 }
 
 func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
-	c.RLock()
-	var line = fmt.Sprintf("CREATE %s :%s", c.Nick, c.Config.Display())
-	c.RUnlock()
+	var line = fmt.Sprintf("CREATE %s :%s", c.CurrentNick(), c.Config.Display())
 	message, err := lierc.ParseIRCMessage(line)
 
 	if err != nil {
@@ -258,6 +252,13 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 
 		line := string(raw)
+		// until the connection is set up we can't tell whether the
+		// server will echo a message, or save a nick change it confirms
+		if needsRegistration(line) && !c.IsRegistered() {
+			http.Error(w, notRegistered, http.StatusConflict)
+			return
+		}
+
 		// through irc-go, so it doesn't later change the nick back
 		queued := false
 		if nick, ok := requestedNick(line); ok {
@@ -299,10 +300,34 @@ func requestedNick(line string) (string, bool) {
 	return nick, nick != ""
 }
 
+// notRegistered is the error for a message or nick change sent before the
+// connection is set up. lierc-api shows it to the user as it is.
+const notRegistered = "Not connected yet, try again in a moment"
+
+// command is a raw line's command, uppercased, after any tags and
+// prefix; "" if the line doesn't parse.
+func command(line string) string {
+	m, err := lierc.ParseIRCMessage(line)
+	if err != nil {
+		return ""
+	}
+	return m.Command
+}
+
 // isMessage reports whether a raw line is a PRIVMSG or NOTICE.
 func isMessage(line string) bool {
-	f := strings.Fields(line)
-	return len(f) > 0 && (strings.EqualFold(f[0], "PRIVMSG") || strings.EqualFold(f[0], "NOTICE"))
+	cmd := command(line)
+	return cmd == "PRIVMSG" || cmd == "NOTICE"
+}
+
+// needsRegistration reports whether a raw line from the API is refused
+// until the connection is set up: a PRIVMSG or NOTICE, which we can't yet
+// tell whether to echo, or a NICK. Other lines (typing notifications,
+// JOIN, raw commands) are sent if connected and dropped otherwise, as
+// before.
+func needsRegistration(line string) bool {
+	cmd := command(line)
+	return cmd == "PRIVMSG" || cmd == "NOTICE" || cmd == "NICK"
 }
 
 // shouldEcho reports whether a raw line from the API is echoed back as our

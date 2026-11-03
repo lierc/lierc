@@ -586,17 +586,17 @@ func TestAckedCapsKept(t *testing.T) {
 	fc.send(":s CAP * ACK :message-tags")
 	fc.expect(t, "CAP END")
 	fc.send(":s 001 me :Welcome")
-	waitRegistered(t, c)
-	if queued := c.Send("PRIVMSG #a :during registration"); !queued {
-		t.Error("Send while connected wasn't queued")
-	}
+	d.waitEvent(t, "001")
 	// irc-go's acked caps are only read once Connect has returned, at the
 	// end of MOTD, so on a first connection they're unknown until then
 	if c.CapEnabled("echo-message") {
 		t.Error("echo-message copied before Connect returned")
 	}
 	fc.send(":s 376 me :End of MOTD")
-	eventually(t, "echo-message after 376", func() bool { return c.CapEnabled("echo-message") })
+	waitRegistered(t, c)
+	if !c.CapEnabled("echo-message") {
+		t.Error("echo-message not copied when registered")
+	}
 
 	fc.close()
 	d.nextMessage(t, "Reconnecting in 1h0m0s")
@@ -629,6 +629,96 @@ func TestCapsAckedWithEarlyWelcome(t *testing.T) {
 				":s 376 me :End of MOTD\r\n"))
 			eventually(t, "echo-message acked", func() bool { return c.CapEnabled("echo-message") })
 		})
+	}
+}
+
+// waitEvent waits for a line with command cmd to have been published.
+func (d *drained) waitEvent(t *testing.T, cmd string) {
+	t.Helper()
+	eventually(t, cmd+" published", func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for _, e := range d.events {
+			if e.Message.Command == cmd {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// Setup finishes when irc-go has registered, at the end of MOTD, not at
+// 001: only then is the client Registered, its PREFIX read and its
+// channels joined, once, however many MOTDs follow.
+func TestRegisteredAfterSetup(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me", "#a"))
+	fc := srv.accept(t)
+	fc.expect(t, "CAP LS")
+	fc.send(":s CAP * LS :echo-message message-tags")
+	fc.send(":s CAP * ACK :echo-message")
+	fc.send(":s CAP * ACK :message-tags")
+	fc.expect(t, "CAP END")
+	fc.send(":s 001 me :Welcome")
+	fc.send(":s 005 me PREFIX=(qov)~@+ :are supported")
+	d.waitEvent(t, "005")
+	if c.IsRegistered() {
+		t.Error("Registered at 001")
+	}
+	fc.expectNo(t, "JOIN", 100*time.Millisecond)
+
+	fc.send(":s 376 me :End of MOTD")
+	fc.expect(t, "JOIN #a")
+	waitRegistered(t, c)
+	c.RLock()
+	prefix := c.prefix
+	c.RUnlock()
+	if want := [][]byte{{'~', 'q'}, {'@', 'o'}, {'+', 'v'}}; !reflect.DeepEqual(prefix, want) {
+		t.Errorf("prefix %q, want %q", prefix, want)
+	}
+
+	// a later MOTD doesn't join again
+	fc.send(":s 422 me :No MOTD")
+	fc.expectNo(t, "JOIN", 200*time.Millisecond)
+}
+
+// Only a nick change we asked for is saved: not a different nick than the
+// one requested, nor someone else taking the requested nick; the match is
+// case-insensitive.
+func TestNickChangeOnlySavesRequested(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
+
+	c.ChangeNick("wanted")
+	fc.expect(t, "NICK wanted")
+	fc.send(":me!u@h NICK other")
+	eventually(t, "nick other", func() bool { return c.CurrentNick() == "other" })
+
+	c.ChangeNick("Mixed")
+	fc.expect(t, "NICK Mixed")
+	fc.send(":other!u@h NICK mixed")
+	eventually(t, "nick saved", func() bool { return len(d.changed()) > 0 })
+	if got, want := changed(t, d.changed()), `{"Id":"c1","Config":{"Nick":"mixed"}}`; got != want {
+		t.Errorf("published %s, want %s", got, want)
+	}
+
+	c.ChangeNick("bob2")
+	fc.expect(t, "NICK bob2")
+	fc.send(":bob!u@h NICK bob2")
+	fc.send(":s 422 me :No MOTD") // a marker after bob's NICK
+	d.waitEvent(t, "422")
+	if n := len(d.changed()); n != 1 {
+		t.Errorf("%d config changes, want 1", n)
+	}
+	if nick := c.CurrentNick(); nick != "mixed" {
+		t.Errorf("nick %q after someone else's change", nick)
 	}
 }
 

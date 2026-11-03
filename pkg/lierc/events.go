@@ -17,27 +17,11 @@ type effects struct {
 var handlers = map[string]func(c *IRCClient, m *IRCMessage, e *effects){}
 
 func init() {
+	// irc-go takes our nick from 001; the rest of setup waits for
+	// Connect to return (finishSetup)
 	handlers["001"] = func(c *IRCClient, m *IRCMessage, e *effects) {
-		if len(m.Params) < 1 {
-			return
-		}
-		c.Nick = m.Params[0]
-		c.Registered = true
 		c.Retries = 0
 	}
-
-	// The end of registration, when irc-go has the whole ISUPPORT map:
-	// take PREFIX from it, then join, so every NAMES reply sees it.
-	endOfRegistration := func(c *IRCClient, m *IRCMessage, e *effects) {
-		if c.joined {
-			return
-		}
-		c.joined = true
-		c.setPrefix(c.isupport())
-		c.Join()
-	}
-	handlers["376"] = endOfRegistration
-	handlers["422"] = endOfRegistration
 
 	// A nick we asked for after registration was refused: don't let
 	// irc-go keep asking for it. It goes back to the nick it preferred
@@ -129,7 +113,7 @@ func init() {
 		}
 		name := strings.ToLower(m.Params[0])
 		nick := m.Prefix.Name
-		if nick == c.Nick {
+		if nick == c.currentNick() {
 			c.Channels[name] = &IRCChannel{
 				Topic:  &IRCTopic{},
 				Name:   m.Params[0], // preserve case
@@ -156,7 +140,7 @@ func init() {
 		}
 		name := strings.ToLower(m.Params[0])
 		nick := m.Params[1]
-		if nick == c.Nick {
+		if nick == c.currentNick() {
 			delete(c.Channels, name)
 			if c.removeConfigChannel(name) {
 				c.configChanged(e, "Channels")
@@ -172,7 +156,7 @@ func init() {
 		}
 		name := strings.ToLower(m.Params[0])
 		nick := m.Prefix.Name
-		if nick == c.Nick {
+		if nick == c.currentNick() {
 			delete(c.Channels, name)
 			if c.removeConfigChannel(name) {
 				c.configChanged(e, "Channels")
@@ -266,8 +250,9 @@ func init() {
 		nick := m.Prefix.Name
 		new_nick := m.Params[0]
 		channels := []string{}
-		if nick == c.Nick {
-			c.Nick = new_nick
+		// irc-go has already followed our own change, so it's ours when
+		// the new nick is irc-go's current one
+		if nick != new_nick && new_nick == c.currentNick() {
 			// save only a nick we asked for, not a server's rename
 			if c.requestedNick != "" && strings.EqualFold(new_nick, c.requestedNick) {
 				c.requestedNick = ""

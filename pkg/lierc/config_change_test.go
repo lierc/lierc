@@ -11,7 +11,6 @@ import (
 func configClient() *IRCClient {
 	c := &IRCClient{
 		Id:       "c1",
-		Nick:     "me",
 		Config:   &IRCConfig{Nick: "me", Channels: []string{"#a", "#key secret"}},
 		Channels: map[string]*IRCChannel{},
 	}
@@ -96,42 +95,5 @@ func TestKickRemovesKickedNick(t *testing.T) {
 	}
 	if _, ok := nicks["me"]; !ok {
 		t.Error("the kicker was removed")
-	}
-}
-
-// Only a nick change we asked for is saved: not a server's rename, nor a
-// different nick than the one requested.
-func TestNickChangeUpdatesConfig(t *testing.T) {
-	c := configClient()
-	c.ChangeNick("new")
-	if got, want := changed(t, handle(t, c, ":me!u@h NICK new")), `{"Id":"c1","Config":{"Nick":"new"}}`; got != want {
-		t.Errorf("requested nick: published %s, want %s", got, want)
-	}
-	if c.Config.Nick != "new" || c.Nick != "new" {
-		t.Errorf("Config.Nick %q Nick %q", c.Config.Nick, c.Nick)
-	}
-
-	// the request is used up
-	if got := changed(t, handle(t, c, ":new!u@h NICK Guest1")); got != "" {
-		t.Errorf("server rename published %s", got)
-	}
-	if c.Config.Nick != "new" || c.Nick != "Guest1" {
-		t.Errorf("after rename: Config.Nick %q Nick %q", c.Config.Nick, c.Nick)
-	}
-
-	c = configClient()
-	c.ChangeNick("wanted")
-	if got := changed(t, handle(t, c, ":me!u@h NICK other")); got != "" {
-		t.Errorf("different nick published %s", got)
-	}
-	c.ChangeNick("Mixed")
-	if got, want := changed(t, handle(t, c, ":other!u@h NICK mixed")), `{"Id":"c1","Config":{"Nick":"mixed"}}`; got != want {
-		t.Errorf("case-insensitive match: published %s, want %s", got, want)
-	}
-
-	c = configClient()
-	c.ChangeNick("bob2")
-	if got := changed(t, handle(t, c, ":bob!u@h NICK bob2")); got != "" {
-		t.Errorf("someone else's nick change published %s", got)
 	}
 }

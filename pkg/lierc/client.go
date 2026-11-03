@@ -280,7 +280,9 @@ func (c *IRCClient) Message(m *IRCMessage) effects {
 	}
 	if (m.Command == "PRIVMSG" || m.Command == "NOTICE") && len(m.Params) > 0 {
 		m.Direct = m.Params[0] == c.Nick
-		m.Prefix.Self = m.Prefix.User == c.User && m.Prefix.Name == c.Nick
+		if m.Command == "PRIVMSG" {
+			m.Prefix.Self = m.Prefix.Name != "" && m.Prefix.User == c.User && m.Prefix.Name == c.Nick
+		}
 	}
 	if handler, ok := handlers[m.Command]; ok {
 		handler(c, m, &e)

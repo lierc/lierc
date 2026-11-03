@@ -3,7 +3,6 @@ package lierc
 import (
 	"fmt"
 	"log"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,17 +25,12 @@ func init() {
 		c.Welcome()
 	}
 
-	var prefix, _ = regexp.Compile("^PREFIX=\\(([^)]+)\\)(.+)$")
-
 	handlers["005"] = func(c *IRCClient, m *IRCMessage, e *effects) {
 		for i := 1; i < len(m.Params)-1; i++ {
 			c.Isupport = append(c.Isupport, m.Params[i])
-			if res := prefix.FindStringSubmatch(m.Params[i]); res != nil {
-				c.prefix = make([][]byte, 0)
-				for i, _ := range res[1] {
-					if len(res[2]) >= i {
-						c.prefix = append(c.prefix, []byte{res[2][i], res[1][i]})
-					}
+			if value, ok := strings.CutPrefix(m.Params[i], "PREFIX="); ok {
+				if prefix, ok := parsePrefix(value); ok {
+					c.prefix = prefix
 				}
 			}
 		}
@@ -343,8 +337,7 @@ func init() {
 		c.SASLAuth(m.Params[0])
 	}
 
-	e := []string{"902", "904", "905", "906"}
-	for _, i := range e {
+	for _, i := range []string{"902", "904", "905", "906"} {
 		handlers[i] = func(c *IRCClient, m *IRCMessage, e *effects) {
 			if len(m.Params) < 1 {
 				return

@@ -62,7 +62,9 @@ func main() {
 			case multi := <-lierc.Multi:
 				p.Enqueue("multi", multi)
 			case status := <-lierc.Status:
-				p.Enqueue("chats", m.ConnectEvent(status))
+				if event := m.ConnectEvent(status); event != nil {
+					p.Enqueue("chats", event)
+				}
 			case change := <-lierc.ConfigChanges:
 				p.Enqueue("config", change)
 			}

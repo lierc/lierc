@@ -91,7 +91,12 @@ func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientM
 	}
 
 	var line = fmt.Sprintf(":%s %s :%s", s.Host, event, s.Message)
-	_, message := lierc.ParseIRCMessage(line)
+	message, err := lierc.ParseIRCMessage(line)
+
+	if err != nil {
+		log.Printf("[Manager] unparseable event %q: %v", line, err)
+		return nil
+	}
 
 	return &lierc.IRCClientMessage{
 		Id:      s.Id,
@@ -101,7 +106,12 @@ func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientM
 
 func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
 	prefix := ":" + c.Nick + "!" + c.User + "@" + c.Host
-	_, message := lierc.ParseIRCMessage(prefix + " " + line)
+	message, err := lierc.ParseIRCMessage(prefix + " " + line)
+
+	if err != nil {
+		log.Printf("[Manager] unparseable event %q: %v", line, err)
+		return nil
+	}
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,
@@ -111,7 +121,12 @@ func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRC
 
 func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
 	var line = fmt.Sprintf("CREATE %s :%s", c.Nick, c.Config.Display())
-	_, message := lierc.ParseIRCMessage(line)
+	message, err := lierc.ParseIRCMessage(line)
+
+	if err != nil {
+		log.Printf("[Manager] unparseable event %q: %v", line, err)
+		return nil
+	}
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,
@@ -121,7 +136,12 @@ func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage 
 
 func (m *ClientManager) DeleteEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
 	var line = fmt.Sprintf("DELETE %s", c.Id)
-	_, message := lierc.ParseIRCMessage(line)
+	message, err := lierc.ParseIRCMessage(line)
+
+	if err != nil {
+		log.Printf("[Manager] unparseable event %q: %v", line, err)
+		return nil
+	}
 
 	return &lierc.IRCClientMessage{
 		Id:      c.Id,
@@ -193,8 +213,9 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[Manager] adding c %s", c.Id)
 		m.AddClient(c)
 
-		event := m.CreateEvent(c)
-		lierc.Events <- event
+		if event := m.CreateEvent(c); event != nil {
+			lierc.Events <- event
+		}
 
 		io.WriteString(w, "ok")
 
@@ -207,8 +228,9 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 
 		log.Printf("Destroying c")
-		event := m.DeleteEvent(c)
-		lierc.Events <- event
+		if event := m.DeleteEvent(c); event != nil {
+			lierc.Events <- event
+		}
 		c.Destroy()
 		m.RemoveClient(c)
 
@@ -238,9 +260,10 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		c.Send(line)
 
 		if isMessage(line) && !c.CapEnabled("echo-message") {
-			event := m.PrivmsgEvent(c, line)
-			event.Message.Prefix.Self = true
-			lierc.Events <- event
+			if event := m.PrivmsgEvent(c, line); event != nil {
+				event.Message.Prefix.Self = true
+				lierc.Events <- event
+			}
 		}
 
 	case "status":

@@ -25,7 +25,7 @@ func configClient() *IRCClient {
 // they published.
 func handle(t *testing.T, c *IRCClient, line string) []*IRCConfigChange {
 	t.Helper()
-	err, m := ParseIRCMessage(line)
+	m, err := ParseIRCMessage(line)
 	if err != nil {
 		t.Fatal(err)
 	}

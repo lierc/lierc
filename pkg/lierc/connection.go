@@ -186,7 +186,7 @@ func (c *IRCConn) Recv() {
 				c.Error(err)
 			} else {
 				line = strings.TrimSuffix(line, "\r\n")
-				err, m := ParseIRCMessage(line)
+				m, err := ParseIRCMessage(line)
 
 				if err != nil {
 					log.Printf("%s Error parsing message %v", c.id, err)

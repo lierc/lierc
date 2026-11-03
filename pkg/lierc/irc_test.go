@@ -336,7 +336,7 @@ func TestClientDataConcurrent(t *testing.T) {
 
 // Handlers run as irc-go callbacks: a QUIT from the server updates the
 // channels and is published to Multi, with the channels it left, as well
-// as to Events with the server's exact line.
+// as to Events.
 func TestQuitThroughCallbacks(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)
@@ -370,13 +370,6 @@ func TestQuitThroughCallbacks(t *testing.T) {
 		t.Errorf("multi tags %v", multi.Message.Tags)
 	}
 	d.waitEvent(t, "QUIT")
-	d.mu.Lock()
-	for _, e := range d.events {
-		if e.Message.Command == "QUIT" && e.Message.Raw != line {
-			t.Errorf("Events Raw %q, want %q", e.Message.Raw, line)
-		}
-	}
-	d.mu.Unlock()
 	c.RLock()
 	_, inChannel := c.Channels["#a"].Nicks["bob"]
 	c.RUnlock()

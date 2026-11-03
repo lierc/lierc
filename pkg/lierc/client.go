@@ -389,7 +389,7 @@ func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 		}
 		return
 	}
-	msg := newIRCMessage(raw, m)
+	msg := newIRCMessage(m)
 	c.Lock()
 	c.annotate(msg)
 	c.Unlock()

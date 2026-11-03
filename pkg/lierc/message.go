@@ -17,15 +17,13 @@ type IRCMessage struct {
 	Prefix  *IRCPrefix
 	Tags    map[string]string
 	Command string
-	Raw     string
 	Time    float64
 	Params  []string
 	Direct  bool
 }
 
-// newIRCMessage builds an IRCMessage from a parsed line. raw is the line
-// as received.
-func newIRCMessage(raw string, m ircmsg.Message) *IRCMessage {
+// newIRCMessage builds an IRCMessage from a parsed line.
+func newIRCMessage(m ircmsg.Message) *IRCMessage {
 	prefix := &IRCPrefix{}
 	if m.Source != "" {
 		// ParseNUH only fails on an empty source
@@ -38,7 +36,6 @@ func newIRCMessage(raw string, m ircmsg.Message) *IRCMessage {
 		Tags:    m.AllTags(),
 		Command: m.Command,
 		Params:  m.Params,
-		Raw:     raw,
 		Time:    float64(time.Now().UnixNano()) / float64(time.Second),
 	}
 }
@@ -48,5 +45,5 @@ func ParseIRCMessage(line string) (*IRCMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newIRCMessage(line, m), nil
+	return newIRCMessage(m), nil
 }

@@ -44,13 +44,10 @@ func eachHandler(add func(command string, h handler)) {
 	add("NICK", (*IRCClient).onNick)
 }
 
-// multiMessage is m sent to the channels it affected. Its Raw is m
-// re-serialized: nothing reads Raw, and irc-go doesn't give normal
-// callbacks the server's line.
+// multiMessage is m sent to the channels it affected.
 func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientMultiMessage {
-	line, _ := m.Line()
 	return &IRCClientMultiMessage{
-		Message:  newIRCMessage(strings.TrimSuffix(line, "\r\n"), m),
+		Message:  newIRCMessage(m),
 		Id:       c.Id,
 		Channels: channels,
 	}

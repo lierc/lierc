@@ -31,7 +31,11 @@ a maintained library used by the Ergo IRC server.
   the logger, notifier, lierc-api (Perl and Go) and the UI, and stay the same
   shape:
   - `IRCMessage` JSON: `Prefix{Name,User,Server,Self}`, `Tags`, `Command`,
-    `Raw`, `Time` (local receive time, float seconds), `Params`, `Direct`.
+    `Time` (local receive time, float seconds), `Params`, `Direct`. `Raw`
+    (the line as received) is dropped (decided by the user): nothing in
+    lierc-api, the UI or the infra reads it, and in liercd only the
+    logger's "missing connection" warning printed it. Rows already in
+    Postgres keep theirs.
   - `IRCClientData` JSON from `/<id>/status`: `Id`, `Config`, `Nick`,
     `Channels[{Name,Nicks (with prefix),Topic,Mode}]`, `Registered`, `Status`,
     `Isupport` (005 tokens: lierc-api replays them as a 005),
@@ -73,10 +77,10 @@ The user picked A and chose to keep the growing reconnect backoff.
 
 Stay in `pkg/lierc` so imports don't move. After the change:
 
-- `message.go`: `IRCMessage`/`IRCPrefix` types unchanged, plus
-  `newIRCMessage(raw string, m ircmsg.Message) *IRCMessage`, which fills
+- `message.go`: `IRCMessage`/`IRCPrefix` types (minus `Raw`), plus
+  `newIRCMessage(m ircmsg.Message) *IRCMessage`, which fills
   `Prefix` from `m.Nick()`/`ircmsg.ParseNUH(m.Source)`, copies tags (now
-  unescaped values), `Command`, `Params`, `Raw` and `Time`. A
+  unescaped values), `Command`, `Params` and `Time`. A
   `ParseIRCMessage(line string) (*IRCMessage, error)` helper on top of
   `ircmsg.ParseLine` stays for `manager.go`'s synthetic lines (note the
   return order is fixed to the idiomatic `(value, error)`; update callers).
@@ -120,16 +124,11 @@ no longer the client's is ignored.
 
 irc-go has no catch-all callback (`AddCallback` rejects "" and "*"), so one
 `AddRawCallback` still publishes every line to `Events`: it builds the
-`IRCMessage` from the server's line and the parsed message, and sets
+`IRCMessage` from the parsed message, and sets
 `Direct` and `Prefix.Self` as today. It runs after the normal callbacks, so
 for QUIT and NICK, `Multi` is published just before the line's `Events`
 (the order before this change); they're separate NSQ topics with no
 ordering between them.
-
-The `IRCMessage` in a `Multi` message has `Raw` re-serialized from irc-go's
-parsed message (`Line()`), since normal callbacks don't get the server's
-line; tags may come out in a different order. Nothing reads `Raw` (it's
-stored, and only the logger's "missing connection" warning prints it).
 
 Lines that fail to parse are logged and dropped, as today.
 
@@ -291,6 +290,10 @@ happens under the lock.
 - `go vet` and `go test -race ./...` clean.
 
 ## Behaviour changes to expect
+
+- `IRCMessage` JSON has no `Raw` field: NSQ events, `Multi`, new Postgres
+  log rows and the UI's stream all lose it. The logger's "missing
+  connection" warning prints the command and params instead.
 
 - A message or nick change sent from the UI while the connection is down or
   still registering is refused with an error ("Not connected yet, try again

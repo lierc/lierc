@@ -209,7 +209,7 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 		return fmt.Errorf("logging message for %s: %w", m.Id, err)
 	}
 	if err != nil {
-		log.Printf("got message for missing connection %q\n%s", m.Id, m.Message.Raw)
+		log.Printf("got message for missing connection %q: %s %q", m.Id, m.Message.Command, m.Message.Params)
 	}
 
 	l.publish(&LoggedMessage{
@@ -237,7 +237,7 @@ func (l *Logger) handleMulti(n *nsq.Message) error {
 		return fmt.Errorf("logging message for %s: %w", m.Id, err)
 	}
 	if err != nil {
-		log.Printf("got message for missing connection %q\n%s", m.Id, m.Message.Raw)
+		log.Printf("got message for missing connection %q: %s %q", m.Id, m.Message.Command, m.Message.Params)
 	}
 
 	l.publish(&LoggedMessage{

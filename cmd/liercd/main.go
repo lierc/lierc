@@ -7,6 +7,7 @@ import (
 	"github.com/lierc/lierc/pkg/liercd"
 	"github.com/nsqio/go-nsq"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +19,16 @@ import (
 // connections. docker stop kills the container 10s after SIGTERM, and
 // closing the connections can take 3s.
 const flushTimeout = 5 * time.Second
+
+// listen binds the command API's address, before anything else starts,
+// so an address already in use (another liercd) is an error at startup.
+func listen(addr string) (net.Listener, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("command API: %w", err)
+	}
+	return ln, nil
+}
 
 // The address for the command API, from LISTEN (e.g. 127.0.0.1:5005).
 func listenAddr() string {
@@ -69,12 +80,16 @@ func main() {
 		}
 	}()
 
-	go func() {
-		http.HandleFunc("/", m.HandleCommand)
-		addr := listenAddr()
-		log.Printf("Listening on %s", addr)
-		http.ListenAndServe(addr, nil)
-	}()
+	http.HandleFunc("/", m.HandleCommand)
+	addr := listenAddr()
+	ln, err := listen(addr)
+	if err != nil {
+		// without the command API nothing can create or reach a
+		// connection, so don't run on silently
+		log.Fatal(err)
+	}
+	log.Printf("Listening on %s", addr)
+	go http.Serve(ln, nil)
 
 	<-ctx.Done()
 	log.Print("stopping")

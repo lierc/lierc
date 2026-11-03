@@ -220,8 +220,9 @@ var testHookConnected func()
 
 // endAttempt ends the attempt conn belongs to, once: Connect's error and
 // the disconnect callback can both report the same end. It publishes
-// the disconnected status and, unless quitting, schedules the next
-// attempt, then closes attemptDone.
+// the disconnected status (the stop reason, if stopped) and, unless
+// quitting or stopped, schedules the next attempt, then closes
+// attemptDone.
 // logMsg is logged at the default level.
 func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg, logMsg string) {
 	c.sender.CompareAndSwap(s, nil)
@@ -237,6 +238,9 @@ func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg, logMsg
 	c.socket = nil
 	c.cancelDial = nil
 	c.Registered = false
+	if c.stopped != "" {
+		msg, logMsg = c.stopped, "stopped: "+c.stopped
+	}
 	c.Unlock()
 
 	c.log.Print(logMsg)
@@ -249,7 +253,7 @@ func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg, logMsg
 	// comes first (no reconnect) or publishes after this
 	c.statusMu.Lock()
 	c.Lock()
-	if c.quitting {
+	if c.quitting || c.stopped != "" {
 		c.Unlock()
 		c.statusMu.Unlock()
 		close(done)

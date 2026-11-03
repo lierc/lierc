@@ -203,8 +203,17 @@ current one. The rules:
    `NICK <that nick>_`, so `me`, `me_`, `me__`, as before this branch.
    irc-go installs its own 433/437 handler inside `Connect()` just before it
    dials, so our dial removes it (`ClearCallback`) and registers our
-   handlers then, once per connection. A 432 (erroneous nickname) at
-   registration isn't handled, as before.
+   handlers then, once per connection.
+   A 432 (erroneous nickname) during registration (decided by the user):
+   for the configured nick, the attempt ends at once with the status
+   `Nickname "x" isn't allowed by the server: <reason>` and liercd stops
+   reconnecting, since the same nick can't work; the connection waits
+   until it's recreated (its nick edited with Save & Reconnect, which
+   lierc-api now does when the nick changes) or liercd restarts. For one
+   of our fallbacks, most likely too long, the base it was built on loses
+   a character (`verylongnick_` → `verylongnic_`); when there's nothing
+   left, it stops the same way ("Couldn't find a nickname the server
+   allows").
 3. At 001 and after any NICK about us, irc-go's preferred nick is set to the
    current nick (`SetNick`, only when they differ; it also sends
    `NICK <current>`, which servers ignore), so irc-go never changes our
@@ -313,6 +322,9 @@ happens under the lock.
 - Tag values in `IRCMessage.Tags` are unescaped (`\s` → space, etc.). Correct
   per the spec; today they're stored escaped.
 - Lines with runs of spaces parse correctly instead of producing empty params.
+- A configured nick the server refuses as erroneous (432) stops the
+  connection with a status saying so, instead of timing out and
+  reconnecting every few minutes forever.
 - Nick changes from the UI are rate-limited with other lines again.
 - After a nick change, liercd may send one `NICK <current nick>`, which
   the server ignores (rule 3 above).

@@ -64,23 +64,61 @@ func (c *IRCClient) onWelcome(m ircmsg.Message, e *effects) {
 }
 
 // onNickRefused handles 432, 433 and 437, a nick refused. During
-// registration (before 001), when the nick is in use (433, 437), it tries
-// the nick with "_" appended: me, me_, me__. irc-go's own handler for
-// these is removed (see addHandlers). Afterwards, a refusal of the nick
-// the user asked for ends the request; nothing else needs undoing, since
-// the request was sent as a plain NICK and irc-go never asked for it.
+// registration (before 001) it picks the next nick to try (see
+// registrationNickRefused); irc-go's own handler for these is removed (see
+// addHandlers). Afterwards, a refusal of the nick the user asked for ends
+// the request; nothing else needs undoing, since the request was sent as a
+// plain NICK and irc-go never asked for it.
 func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
 	if len(m.Params) < 2 || c.conn == nil {
 		return
 	}
 	if c.conn.CurrentNick() == "" {
-		if m.Command != "432" {
-			c.Send("NICK " + m.Params[1] + "_")
-		}
+		c.registrationNickRefused(m)
 		return
 	}
 	if c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
 		c.requestedNick = ""
+	}
+}
+
+// registrationNickRefused picks the next nick to register with after the
+// server refused one, or stops the connection when there's none left:
+//
+//   - in use (433, 437): the nick with "_" appended, so me, me_, me__
+//   - not allowed (432), the configured nick: stop, since trying it again
+//     can't work; the user changes it in the connection's settings
+//   - not allowed (432), one of our fallbacks (most likely too long): drop
+//     a character from what it was built on, so verylongnick_ becomes
+//     verylongnic_, and stop once there's nothing left to drop
+//
+// c is locked.
+func (c *IRCClient) registrationNickRefused(m ircmsg.Message) {
+	refused := m.Params[1]
+	reason := m.Params[len(m.Params)-1]
+	switch {
+	case m.Command != "432":
+		c.Send("NICK " + refused + "_")
+	case strings.EqualFold(refused, c.Config.Nick):
+		c.stop(fmt.Sprintf("Nickname %q isn't allowed by the server: %s", refused, reason))
+	default:
+		base := []rune(strings.TrimRight(refused, "_"))
+		if len(base) <= 1 {
+			c.stop("Couldn't find a nickname the server allows: " + reason)
+			return
+		}
+		c.Send("NICK " + string(base[:len(base)-1]) + "_")
+	}
+}
+
+// stop ends the current attempt and keeps liercd from reconnecting: the
+// connection waits, showing reason as its status, until it's destroyed
+// and created again (its settings edited) or liercd restarts. c is
+// locked.
+func (c *IRCClient) stop(reason string) {
+	c.stopped = reason
+	if c.socket != nil {
+		c.socket.Close()
 	}
 }
 

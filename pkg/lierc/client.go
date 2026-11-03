@@ -60,6 +60,9 @@ type IRCClient struct {
 	Retries       int
 	prefix        [][]byte
 	quitting      bool
+	// stopped is why liercd stopped reconnecting (the server refused
+	// every nick it could try), or "" while it reconnects as usual
+	stopped       string
 	debug         int64
 	timer         *time.Timer
 	requestedNick string // the nick last sent with NICK, until it's taken

@@ -217,6 +217,78 @@ func TestSASL(t *testing.T) {
 	})
 }
 
+// A 432 for the configured nick during registration ends the attempt at
+// once, says why, and doesn't reconnect: the same nick can't work.
+func TestErroneousNickStops(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("bad.nick"))
+	fc := srv.accept(t)
+	fc.expect(t, "NICK bad.nick")
+	fc.send(":s 432 * bad.nick :Erroneous Nickname")
+
+	want := `Nickname "bad.nick" isn't allowed by the server: Erroneous Nickname`
+	d.nextMessage(t, want)
+	// retries are 20ms apart, so a reconnect would be well inside this
+	srv.noAccept(t, 300*time.Millisecond)
+	for _, m := range d.messages() {
+		if strings.HasPrefix(m, "Reconnecting in") {
+			t.Errorf("statuses %q include a reconnect", d.messages())
+		}
+	}
+	c.RLock()
+	status := c.Status()
+	c.RUnlock()
+	if status.Connected || status.Message != want {
+		t.Errorf("status %+v", status)
+	}
+}
+
+// A 432 for one of our fallbacks (most likely too long) shortens what it
+// was built on instead of adding more underscores.
+func TestErroneousFallbackShortened(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	drain(t)
+	c := newTestClient(t, srv.config("verylongnick"))
+	fc := srv.accept(t)
+	fc.expect(t, "NICK verylongnick")
+	fc.send(":s 433 * verylongnick :in use")
+	fc.expect(t, "NICK verylongnick_")
+	fc.send(":s 432 * verylongnick_ :Erroneous Nickname")
+	if got := fc.expect(t, "NICK "); got != "NICK verylongnic_" {
+		t.Fatalf("after 432: %q", got)
+	}
+	fc.send(":s CAP * ACK :echo-message")
+	fc.send(":s CAP * ACK :message-tags")
+	fc.expect(t, "CAP END")
+	fc.welcome("verylongnic_")
+	waitRegistered(t, c)
+	if nick := clientNick(c); nick != "verylongnic_" {
+		t.Errorf("Nick %q", nick)
+	}
+}
+
+// When shortening leaves nothing to try, the connection stops as for a
+// refused configured nick.
+func TestNoNickLeftStops(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	newTestClient(t, srv.config("ab"))
+	fc := srv.accept(t)
+	fc.expect(t, "NICK ab")
+	fc.send(":s 433 * ab :in use")
+	fc.expect(t, "NICK ab_")
+	fc.send(":s 432 * ab_ :Erroneous Nickname")
+	fc.expect(t, "NICK a_")
+	fc.send(":s 432 * a_ :Erroneous Nickname")
+
+	d.nextMessage(t, "Couldn't find a nickname the server allows: Erroneous Nickname")
+	srv.noAccept(t, 300*time.Millisecond)
+}
+
 // A nick in use during registration gets "_" appended, again for each
 // refusal (our handler, not irc-go's nick_0, nick_1).
 func TestNickInUseAtRegistration(t *testing.T) {

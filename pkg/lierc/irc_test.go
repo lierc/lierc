@@ -378,6 +378,46 @@ func TestQuitThroughCallbacks(t *testing.T) {
 	}
 }
 
+// Our JOIN, PART and a KICK of us, arriving through irc-go's callbacks,
+// publish the whole new channel list on ConfigChanges; joining a channel
+// already in the config publishes nothing.
+func TestChannelChangesPublished(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me", "#a"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	fc.expect(t, "JOIN #a")
+	fc.send(":me!u@h JOIN #a")
+	fc.send(":me!u@h JOIN #b")
+	fc.send(":me!u@h PART #a :bye")
+	fc.send(":op!o@h KICK #b me :out")
+
+	want := []string{
+		`{"Id":"c1","Config":{"Channels":["#a","#b"]}}`,
+		`{"Id":"c1","Config":{"Channels":["#b"]}}`,
+		`{"Id":"c1","Config":{"Channels":[]}}`,
+	}
+	eventually(t, "3 config changes", func() bool { return len(d.changed()) >= len(want) })
+	changes := d.changed()
+	if len(changes) != len(want) {
+		t.Fatalf("%d config changes, want %d", len(changes), len(want))
+	}
+	for i, change := range changes {
+		b, _ := json.Marshal(change)
+		if string(b) != want[i] {
+			t.Errorf("change %d: %s, want %s", i, b, want[i])
+		}
+	}
+	c.RLock()
+	n := len(c.Channels)
+	c.RUnlock()
+	if n != 0 {
+		t.Errorf("%d channels left", n)
+	}
+}
+
 func TestPortMap(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)

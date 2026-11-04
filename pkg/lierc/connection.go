@@ -49,6 +49,15 @@ func backoff(retries int) time.Duration {
 	return retryUnit * time.Duration(retries)
 }
 
+// quitMessage is the message sent with QUIT, from QUIT_MESSAGE (say, the
+// site's address), or "bye".
+func quitMessage() string {
+	if m := os.Getenv("QUIT_MESSAGE"); m != "" {
+		return m
+	}
+	return "bye"
+}
+
 // connect runs one connection attempt: it blocks until registration
 // completes or the attempt fails. A failure, or the later end of a
 // registered connection, schedules the next attempt (see endAttempt).
@@ -73,7 +82,7 @@ func (c *IRCClient) connect() {
 		RequestCaps: []string{CAP_ECHO_MESSAGE, CAP_MESSAGE_TAGS},
 		Timeout:     ircTimeout,
 		KeepAlive:   ircKeepAlive,
-		QuitMessage: "bye",
+		QuitMessage: quitMessage(),
 		// set so Connect doesn't fill it in while Destroy's Quit reads it
 		MaxLineLen: ircMaxLineLen,
 		Log:        c.log,

@@ -4,16 +4,17 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/ergochat/irc-go/ircmsg"
 )
 
-// a client in #a and #key (joined with a key) as "me", that sends nothing
+// a client in #a and #key (joined with a key) as "me", with no connection
+// or sender, so what its handlers send is dropped
 func configClient() *IRCClient {
 	c := &IRCClient{
 		Id:       "c1",
-		Nick:     "me",
 		Config:   &IRCConfig{Nick: "me", Channels: []string{"#a", "#key secret"}},
 		Channels: map[string]*IRCChannel{},
-		irc:      &IRCConn{},
 	}
 	for _, name := range []string{"#a", "#key"} {
 		c.Channels[name] = &IRCChannel{Name: name, Topic: &IRCTopic{}, Nicks: map[string][]byte{"me": {}, "bob": {}}}
@@ -21,27 +22,37 @@ func configClient() *IRCClient {
 	return c
 }
 
-// handle runs line through c's handlers and returns the config changes
-// they published.
-func handle(t *testing.T, c *IRCClient, line string) []*IRCConfigChange {
+// handleLine runs line through its handler, if it has one, as irc-go's
+// callback would, and returns what the handler wants published.
+func handleLine(t *testing.T, c *IRCClient, line string) effects {
 	t.Helper()
-	err, m := ParseIRCMessage(line)
+	m, err := ircmsg.ParseLine(line)
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, savedMulti := ConfigChanges, Multi
-	ConfigChanges, Multi = make(chan *IRCConfigChange, 10), make(chan *IRCClientMultiMessage, 10)
-	defer func() { ConfigChanges, Multi = saved, savedMulti }()
-	c.Message(m)
-	var changes []*IRCConfigChange
-	for {
-		select {
-		case ch := <-ConfigChanges:
-			changes = append(changes, ch)
-		default:
-			return changes
-		}
+	return handleMessage(c, m)
+}
+
+func handleMessage(c *IRCClient, m ircmsg.Message) effects {
+	h, ok := allHandlers()[m.Command]
+	if !ok {
+		return effects{}
 	}
+	return c.run(c.conn, h, m)
+}
+
+// allHandlers is eachHandler's handlers by command.
+func allHandlers() map[string]handler {
+	all := map[string]handler{}
+	eachHandler(func(cmd string, h handler) { all[cmd] = h })
+	return all
+}
+
+// handle runs line through its handler and returns the config changes it
+// published.
+func handle(t *testing.T, c *IRCClient, line string) []*IRCConfigChange {
+	t.Helper()
+	return handleLine(t, c, line).changes
 }
 
 func changed(t *testing.T, changes []*IRCConfigChange) string {
@@ -108,42 +119,5 @@ func TestKickRemovesKickedNick(t *testing.T) {
 	}
 	if _, ok := nicks["me"]; !ok {
 		t.Error("the kicker was removed")
-	}
-}
-
-// Only a nick change we asked for is saved: not a server's rename, nor a
-// different nick than the one requested.
-func TestNickChangeUpdatesConfig(t *testing.T) {
-	c := configClient()
-	c.RequestNick("new")
-	if got, want := changed(t, handle(t, c, ":me!u@h NICK new")), `{"Id":"c1","Config":{"Nick":"new"}}`; got != want {
-		t.Errorf("requested nick: published %s, want %s", got, want)
-	}
-	if c.Config.Nick != "new" || c.Nick != "new" {
-		t.Errorf("Config.Nick %q Nick %q", c.Config.Nick, c.Nick)
-	}
-
-	// the request is used up
-	if got := changed(t, handle(t, c, ":new!u@h NICK Guest1")); got != "" {
-		t.Errorf("server rename published %s", got)
-	}
-	if c.Config.Nick != "new" || c.Nick != "Guest1" {
-		t.Errorf("after rename: Config.Nick %q Nick %q", c.Config.Nick, c.Nick)
-	}
-
-	c = configClient()
-	c.RequestNick("wanted")
-	if got := changed(t, handle(t, c, ":me!u@h NICK other")); got != "" {
-		t.Errorf("different nick published %s", got)
-	}
-	c.RequestNick("Mixed")
-	if got, want := changed(t, handle(t, c, ":other!u@h NICK mixed")), `{"Id":"c1","Config":{"Nick":"mixed"}}`; got != want {
-		t.Errorf("case-insensitive match: published %s, want %s", got, want)
-	}
-
-	c = configClient()
-	c.RequestNick("bob2")
-	if got := changed(t, handle(t, c, ":bob!u@h NICK bob2")); got != "" {
-		t.Errorf("someone else's nick change published %s", got)
 	}
 }

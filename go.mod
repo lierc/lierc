@@ -4,6 +4,7 @@ go 1.27
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
+	github.com/ergochat/irc-go v0.7.0
 	github.com/lib/pq v1.12.3
 	github.com/nsqio/go-nsq v1.1.0
 	golang.org/x/time v0.16.0

@@ -2,81 +2,46 @@ package lierc
 
 import (
 	"bufio"
-	"net"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-// A server that, like a slow one, never closes the connection after QUIT,
-// so Destroy's 2s timer closes it instead.
-func ignoreQuitServer(t *testing.T) (port int, quit <-chan struct{}) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { ln.Close() })
+// A server that never closes the connection after QUIT, so Destroy closes
+// it itself after destroyTimeout.
+func TestDestroyWhenServerIgnoresQuit(t *testing.T) {
+	old := retryUnit
+	retryUnit = 20 * time.Millisecond
+	t.Cleanup(func() { retryUnit = old })
+	srv := newFakeServer(t)
+	drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
 
-	got := make(chan struct{})
+	quit := make(chan struct{})
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		r := bufio.NewReader(conn)
+		r := bufio.NewReader(fc)
 		for {
 			line, err := r.ReadString('\n')
 			if err != nil {
 				return
 			}
 			if strings.HasPrefix(line, "QUIT") {
-				close(got)
-			}
-		}
-	}()
-	return ln.Addr().(*net.TCPAddr).Port, got
-}
-
-func TestDestroyWhenServerIgnoresQuit(t *testing.T) {
-	port, quit := ignoreQuitServer(t)
-	// the test server is on loopback, which only the default network may use
-	t.Setenv("DEFAULT_NETWORK_HOST", "127.0.0.1")
-	t.Setenv("DEFAULT_NETWORK_PORT", strconv.Itoa(port))
-
-	connected := make(chan struct{}, 1)
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		for {
-			select {
-			case s := <-Status:
-				if s.Connected {
-					select {
-					case connected <- struct{}{}:
-					default:
-					}
-				}
-			case <-Events:
-			case <-Multi:
-			case <-stop:
-				return
+				close(quit)
 			}
 		}
 	}()
 
-	c := NewIRCClient(&IRCConfig{Host: "127.0.0.1", Port: port, Nick: "tester", User: "tester"}, "c1")
-	select {
-	case <-connected:
-	case <-time.After(5 * time.Second):
-		t.Fatal("never connected")
-	}
-
+	start := time.Now()
 	c.Destroy()
-	<-quit
-
-	// the disconnect from Destroy's timer closing the connection reaches
-	// Event after Destroy returns
-	time.Sleep(200 * time.Millisecond)
+	if elapsed := time.Since(start); elapsed > destroyTimeout+time.Second {
+		t.Errorf("Destroy took %s", elapsed)
+	}
+	select {
+	case <-quit:
+	case <-time.After(time.Second):
+		t.Error("server never got QUIT")
+	}
 }

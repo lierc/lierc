@@ -73,7 +73,9 @@ func main() {
 			case multi := <-lierc.Multi:
 				p.Enqueue("multi", multi)
 			case status := <-lierc.Status:
-				p.Enqueue("chats", m.ConnectEvent(status))
+				if event := m.ConnectEvent(status); event != nil {
+					p.Enqueue("chats", event)
+				}
 			case change := <-lierc.ConfigChanges:
 				p.Enqueue("config", change)
 			}
@@ -89,7 +91,10 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("Listening on %s", addr)
-	go http.Serve(ln, nil)
+	go func() {
+		// the API failing later is as bad as it failing to start
+		log.Fatal(http.Serve(ln, nil))
+	}()
 
 	<-ctx.Done()
 	log.Print("stopping")

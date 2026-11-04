@@ -3,294 +3,474 @@ package lierc
 import (
 	"fmt"
 	"log"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ergochat/irc-go/ircevent"
+	"github.com/ergochat/irc-go/ircmsg"
 )
 
-var handlers = map[string]func(*IRCClient, *IRCMessage){}
+// effects is what handling one message does once c is unlocked: what it
+// publishes besides the line itself (which the raw callback publishes),
+// and the nick irc-go should prefer (see keepNick), if that changes.
+type effects struct {
+	multi      *IRCClientMultiMessage // QUIT and NICK
+	changes    []*IRCConfigChange
+	preferNick string
+}
 
-func init() {
-	handlers["001"] = func(c *IRCClient, m *IRCMessage) {
-		c.Nick = m.Params[0]
-		c.Welcome()
+// A handler updates c's state for one message from the server, with c
+// locked. Each is registered as an irc-go callback for its command on
+// every connection (see connect); irc-go runs them on the connection's
+// read goroutine, after its own callbacks and before the raw callback.
+type handler func(c *IRCClient, m ircmsg.Message, e *effects)
+
+// eachHandler calls add with each command we handle and its handler.
+func eachHandler(add func(command string, h handler)) {
+	add("001", (*IRCClient).onWelcome)
+	add("432", (*IRCClient).onNickRefused)
+	add("433", (*IRCClient).onNickRefused)
+	add("437", (*IRCClient).onNickRefused)
+	add("353", (*IRCClient).onNames)
+	add("366", (*IRCClient).onEndOfNames)
+	add("MODE", (*IRCClient).onMode)
+	add("JOIN", (*IRCClient).onJoin)
+	add("KICK", (*IRCClient).onKick)
+	add("PART", (*IRCClient).onPart)
+	add("QUIT", (*IRCClient).onQuit)
+	add("TOPIC", (*IRCClient).onTopic)
+	add("332", (*IRCClient).onTopicReply)
+	add("324", (*IRCClient).onChannelModes)
+	add("333", (*IRCClient).onTopicWhoTime)
+	add("PRIVMSG", (*IRCClient).onPrivmsg)
+	add("NICK", (*IRCClient).onNick)
+}
+
+// multiMessage is m sent to the channels it affected.
+func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientMultiMessage {
+	return &IRCClientMultiMessage{
+		Message:  newIRCMessage(m),
+		Id:       c.Id,
+		Channels: channels,
+	}
+}
+
+// onWelcome handles 001. irc-go takes our nick from it, and we have irc-go
+// keep that nick, so it doesn't try to win the configured one back after
+// registering under a fallback. The rest of setup waits for Connect to
+// return (finishSetup).
+func (c *IRCClient) onWelcome(m ircmsg.Message, e *effects) {
+	c.Retries = 0
+	c.keepNick(e)
+}
+
+// onNickRefused handles 432, 433 and 437, a nick refused. During
+// registration (before 001) it picks the next nick to try (see
+// registrationNickRefused); irc-go's own handler for these is removed (see
+// addHandlers). Afterwards, a refusal of the nick the user asked for ends
+// the request, and irc-go goes back to preferring the nick we have (it
+// prefers a pending request's; see keepNick). The request was sent as a
+// plain NICK, so irc-go never asked for it and won't retry it.
+func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 2 || c.conn == nil {
+		return
+	}
+	if c.conn.CurrentNick() == "" {
+		c.registrationNickRefused(m)
+		return
+	}
+	// a short reply ("433 * :reason") doesn't say which nick; it can't
+	// be the request's
+	if len(m.Params) >= 3 && c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
+		c.requestedNick = ""
+		// back to preferring the nick we have
+		c.keepNick(e)
+	}
+}
+
+// maxNickTries is how many refused nicks one registration attempt takes
+// before it's given up; liercd reconnects after it as usual.
+const maxNickTries = 10
+
+// registrationNickRefused picks the next nick to register with after the
+// server refused one, or stops the connection when there's none left:
+//
+//   - in use (433, 437): the nick with "_" appended, so me, me_, me__.
+//     A server that cuts what we sent to its nick length refuses the cut
+//     nick instead (verylongni for verylongni_); then the last character
+//     before the "_"s becomes one, keeping the length (verylongn_).
+//   - not allowed (432), the configured nick: stop, since trying it again
+//     can't work; the user changes it in the connection's settings
+//   - not allowed (432), one of our fallbacks (most likely too long): drop
+//     a character from what it was built on, so verylongnick_ becomes
+//     verylongnic_, and stop once there's nothing left to drop
+//
+// After maxNickTries the attempt is given up, and liercd reconnects
+// later. c is locked.
+func (c *IRCClient) registrationNickRefused(m ircmsg.Message) {
+	// a short reply ("433 * :reason") doesn't say which nick; it's the
+	// one we sent last
+	refused := c.regNick
+	if len(m.Params) >= 3 {
+		refused = m.Params[1]
+	}
+	reason := m.Params[len(m.Params)-1]
+	if m.Command == "432" && strings.EqualFold(refused, c.Config.Nick) {
+		c.stop(fmt.Sprintf("Nickname %q isn't allowed by the server: %s", refused, reason))
+		return
 	}
 
-	var prefix, _ = regexp.Compile("^PREFIX=\\(([^)]+)\\)(.+)$")
-
-	handlers["005"] = func(c *IRCClient, m *IRCMessage) {
-		for i := 1; i < len(m.Params)-1; i++ {
-			c.Isupport = append(c.Isupport, m.Params[i])
-			if res := prefix.FindStringSubmatch(m.Params[i]); res != nil {
-				c.prefix = make([][]byte, 0)
-				for i, _ := range res[1] {
-					if len(res[2]) >= i {
-						c.prefix = append(c.prefix, []byte{res[2][i], res[1][i]})
-					}
-				}
-			}
-		}
+	c.regTries++
+	if c.regTries > maxNickTries {
+		c.giveUp("Couldn't find a free nickname: " + reason)
+		return
 	}
 
-	handlers["376"] = func(c *IRCClient, m *IRCMessage) {
-		c.Welcome()
-	}
-
-	handlers["421"] = func(c *IRCClient, m *IRCMessage) {
-		if strings.HasPrefix(m.Command, "CAP LS") {
-			c.CapNotSupported()
-		}
-	}
-
-	handlers["422"] = func(c *IRCClient, m *IRCMessage) {
-		c.Welcome()
-	}
-
-	handlers["433"] = func(c *IRCClient, m *IRCMessage) {
-		c.NickCollision(m)
-	}
-
-	handlers["437"] = func(c *IRCClient, m *IRCMessage) {
-		c.NickCollision(m)
-	}
-
-	handlers["353"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[2])
-		if channel, ok := c.Channels[name]; ok {
-			if channel.Synced {
-				channel.Synced = false
-				channel.Nicks = make(map[string][]byte, 0)
-			}
-
-			nicks := strings.Split(m.Params[3], " ")
-			for _, nick := range nicks {
-				if len(nick) > 0 {
-					if mode, ok := c.NickPrefixMode(nick[0]); ok {
-						channel.Nicks[nick[1:]] = []byte{mode}
-					} else {
-						channel.Nicks[nick] = []byte{}
-					}
-				}
-			}
-		}
-	}
-
-	handlers["366"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[1])
-		if channel, ok := c.Channels[name]; ok {
-			channel.Synced = true
-		}
-	}
-
-	handlers["MODE"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[0])
-		if m.Prefix.Name == name {
-			// global user mode hmm
-		} else if channel, ok := c.Channels[name]; ok {
-			action := m.Params[1][0]
-			modes := []byte(m.Params[1][1:])
-
-			for _, mode := range modes {
-				if c.IsNickMode(mode) {
-					channel.SetNickMode(action, mode, m.Params[2])
-				} else if len(m.Params) == 2 {
-					channel.SetMode(action, mode)
-				}
-			}
-		}
-	}
-
-	handlers["JOIN"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[0])
-		nick := m.Prefix.Name
-		if nick == c.Nick {
-			c.Channels[name] = &IRCChannel{
-				Topic:  &IRCTopic{},
-				Name:   m.Params[0], // preserve case
-				Nicks:  make(map[string][]byte),
-				Synced: false,
-			}
-			c.Host = m.Prefix.Server
-			c.User = m.Prefix.User
-			c.Send(fmt.Sprintf("MODE %s", m.Params[0]))
-			if c.addConfigChannel(m.Params[0]) {
-				c.configChanged("Channels")
-			}
-		}
-		if channel, ok := c.Channels[name]; ok {
-			channel.Nicks[nick] = []byte{}
-		}
-	}
-
-	// KICK <channel> <nick> [reason]: the kicked nick is a parameter, the
-	// prefix is whoever kicked them
-	handlers["KICK"] = func(c *IRCClient, m *IRCMessage) {
-		if len(m.Params) < 2 {
+	var next string
+	switch {
+	case m.Command == "432":
+		base := []rune(strings.TrimRight(refused, "_"))
+		if len(base) <= 1 {
+			c.stop("Couldn't find a nickname the server allows: " + reason)
 			return
 		}
-		name := strings.ToLower(m.Params[0])
-		nick := m.Params[1]
-		if nick == c.Nick {
-			delete(c.Channels, name)
-			if c.removeConfigChannel(name) {
-				c.configChanged("Channels")
+		next = string(base[:len(base)-1]) + "_"
+	case len([]rune(refused)) < len([]rune(c.regNick)):
+		next = underscoreLast(refused)
+		if next == "" {
+			c.giveUp("Couldn't find a free nickname: " + reason)
+			return
+		}
+	default:
+		next = refused + "_"
+	}
+	c.regNick = next
+	c.Send("NICK " + next)
+}
+
+// underscoreLast is nick with its last character before any trailing "_"s
+// made a "_" too, so it keeps its length: nick_ becomes nic__. It's ""
+// when only one such character is left.
+func underscoreLast(nick string) string {
+	r := []rune(nick)
+	base := len([]rune(strings.TrimRight(nick, "_")))
+	if base <= 1 {
+		return ""
+	}
+	r[base-1] = '_'
+	return string(r)
+}
+
+// giveUp ends the current attempt, with reason as its status; unlike
+// stop, liercd reconnects after it as usual. c is locked.
+func (c *IRCClient) giveUp(reason string) {
+	c.gaveUp = reason
+	if c.socket != nil {
+		c.socket.Close()
+	}
+}
+
+// stop ends the current attempt and keeps liercd from reconnecting: the
+// connection waits, showing reason as its status, until it's destroyed
+// and created again (its settings edited) or liercd restarts. c is
+// locked.
+func (c *IRCClient) stop(reason string) {
+	c.stopped = reason
+	if c.socket != nil {
+		c.socket.Close()
+	}
+}
+
+// onNames handles 353, a NAMES reply: the channel's nicks and their modes.
+func (c *IRCClient) onNames(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 4 {
+		return
+	}
+	name := strings.ToLower(m.Params[2])
+	if channel, ok := c.Channels[name]; ok {
+		if channel.Synced {
+			channel.Synced = false
+			channel.Nicks = make(map[string][]byte, 0)
+		}
+
+		nicks := strings.Split(m.Params[3], " ")
+		for _, nick := range nicks {
+			if len(nick) > 0 {
+				if mode, ok := c.NickPrefixMode(nick[0]); ok {
+					channel.Nicks[nick[1:]] = []byte{mode}
+				} else {
+					channel.Nicks[nick] = []byte{}
+				}
 			}
-		} else if channel, ok := c.Channels[name]; ok {
+		}
+	}
+}
+
+// onEndOfNames handles 366, the end of a NAMES reply.
+func (c *IRCClient) onEndOfNames(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 2 {
+		return
+	}
+	name := strings.ToLower(m.Params[1])
+	if channel, ok := c.Channels[name]; ok {
+		channel.Synced = true
+	}
+}
+
+// onMode handles a channel's MODE change.
+func (c *IRCClient) onMode(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 2 {
+		return
+	}
+	name := strings.ToLower(m.Params[0])
+	if m.Nick() == name {
+		// global user mode hmm
+	} else if channel, ok := c.Channels[name]; ok {
+		if m.Params[1] == "" {
+			return
+		}
+		action := m.Params[1][0]
+		modes := []byte(m.Params[1][1:])
+
+		for _, mode := range modes {
+			if c.IsNickMode(mode) {
+				if len(m.Params) > 2 {
+					channel.SetNickMode(action, mode, m.Params[2])
+				}
+			} else if len(m.Params) == 2 {
+				channel.SetMode(action, mode)
+			}
+		}
+	}
+}
+
+// onJoin handles JOIN: ours adds the channel (and saves it to the config).
+func (c *IRCClient) onJoin(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 1 {
+		return
+	}
+	name := strings.ToLower(m.Params[0])
+	nick := m.Nick()
+	if nick == c.currentNick() {
+		c.Channels[name] = &IRCChannel{
+			Topic:  &IRCTopic{},
+			Name:   m.Params[0], // preserve case
+			Nicks:  make(map[string][]byte),
+			Synced: false,
+		}
+		if nuh, err := m.NUH(); err == nil {
+			c.Host = nuh.Host
+			c.User = nuh.User
+		}
+		c.Send(fmt.Sprintf("MODE %s", m.Params[0]))
+		if c.addConfigChannel(m.Params[0]) {
+			c.configChanged(e, "Channels")
+		}
+	}
+	if channel, ok := c.Channels[name]; ok {
+		channel.Nicks[nick] = []byte{}
+	}
+}
+
+// onKick handles KICK <channel> <nick> [reason]: the kicked nick is a
+// parameter, the prefix is whoever kicked them.
+func (c *IRCClient) onKick(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 2 {
+		return
+	}
+	name := strings.ToLower(m.Params[0])
+	nick := m.Params[1]
+	if nick == c.currentNick() {
+		delete(c.Channels, name)
+		if c.removeConfigChannel(name) {
+			c.configChanged(e, "Channels")
+		}
+	} else if channel, ok := c.Channels[name]; ok {
+		delete(channel.Nicks, nick)
+	}
+}
+
+// onPart handles PART: ours removes the channel (and from the config).
+func (c *IRCClient) onPart(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 1 {
+		return
+	}
+	name := strings.ToLower(m.Params[0])
+	nick := m.Nick()
+	if nick == c.currentNick() {
+		delete(c.Channels, name)
+		if c.removeConfigChannel(name) {
+			c.configChanged(e, "Channels")
+		}
+	} else if channel, ok := c.Channels[name]; ok {
+		delete(channel.Nicks, nick)
+	}
+}
+
+// onQuit handles QUIT, published to the channels the nick was in.
+func (c *IRCClient) onQuit(m ircmsg.Message, e *effects) {
+	channels := []string{}
+	nick := m.Nick()
+	for _, channel := range c.Channels {
+		if _, ok := channel.Nicks[nick]; ok {
 			delete(channel.Nicks, nick)
+			channels = append(channels, channel.Name)
 		}
 	}
+	e.multi = multiMessage(c, m, channels)
+}
 
-	handlers["PART"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[0])
-		nick := m.Prefix.Name
-		if nick == c.Nick {
-			delete(c.Channels, name)
-			if c.removeConfigChannel(name) {
-				c.configChanged("Channels")
-			}
-		} else if channel, ok := c.Channels[name]; ok {
-			delete(channel.Nicks, nick)
-		}
+// onTopic handles a TOPIC change.
+func (c *IRCClient) onTopic(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 2 {
+		return
 	}
-
-	handlers["QUIT"] = func(c *IRCClient, m *IRCMessage) {
-		channels := []string{}
-		nick := m.Prefix.Name
-		for _, channel := range c.Channels {
-			if _, ok := channel.Nicks[nick]; ok {
-				delete(channel.Nicks, nick)
-				channels = append(channels, channel.Name)
-			}
-		}
-		Multi <- &IRCClientMultiMessage{
-			Message:  m,
-			Id:       c.Id,
-			Channels: channels,
-		}
+	nick := m.Nick()
+	name := strings.ToLower(m.Params[0])
+	topic := m.Params[1]
+	if channel, ok := c.Channels[name]; ok {
+		channel.Topic.Topic = topic
+		channel.Topic.Time = time.Now().Unix()
+		channel.Topic.User = nick
 	}
+}
 
-	handlers["TOPIC"] = func(c *IRCClient, m *IRCMessage) {
-		nick := m.Prefix.Name
-		name := strings.ToLower(m.Params[0])
-		topic := m.Params[1]
-		if channel, ok := c.Channels[name]; ok {
-			channel.Topic.Topic = topic
-			channel.Topic.Time = time.Now().Unix()
-			channel.Topic.User = nick
-		}
+// onTopicReply handles 332, a channel's topic on join.
+func (c *IRCClient) onTopicReply(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 3 {
+		return
 	}
-
-	handlers["332"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[1])
-		topic := m.Params[2]
-		if channel, ok := c.Channels[name]; ok {
-			channel.Topic.Topic = topic
-		}
+	name := strings.ToLower(m.Params[1])
+	topic := m.Params[2]
+	if channel, ok := c.Channels[name]; ok {
+		channel.Topic.Topic = topic
 	}
+}
 
-	handlers["324"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[1])
-		if channel, ok := c.Channels[name]; ok {
+// onChannelModes handles 324, a channel's modes.
+func (c *IRCClient) onChannelModes(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 3 {
+		return
+	}
+	name := strings.ToLower(m.Params[1])
+	if channel, ok := c.Channels[name]; ok {
+		if m.Params[2] != "" {
 			channel.Mode = []byte(m.Params[2][1:])
 		}
 	}
+}
 
-	handlers["333"] = func(c *IRCClient, m *IRCMessage) {
-		name := strings.ToLower(m.Params[1])
-		if channel, ok := c.Channels[name]; ok {
-			time, _ := strconv.ParseInt(m.Params[3], 10, 64)
-			channel.Topic.Time = time
-			channel.Topic.User = m.Params[2]
+// onTopicWhoTime handles 333, who set a channel's topic, and when.
+func (c *IRCClient) onTopicWhoTime(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 4 {
+		return
+	}
+	name := strings.ToLower(m.Params[1])
+	if channel, ok := c.Channels[name]; ok {
+		time, _ := strconv.ParseInt(m.Params[3], 10, 64)
+		channel.Topic.Time = time
+		channel.Topic.User = m.Params[2]
+	}
+}
+
+// onPrivmsg handles PRIVMSG; it only logs CTCP VERSION requests.
+func (c *IRCClient) onPrivmsg(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 2 {
+		return
+	}
+	text := m.Params[1]
+	if len(text) >= 7 && text[0:7] == "\x01VERSION" {
+		log.Printf("%v", m)
+	}
+}
+
+// onNick handles NICK, published to the channels the nick was in. Ours
+// is saved to the config only when it's the nick we asked for.
+func (c *IRCClient) onNick(m ircmsg.Message, e *effects) {
+	if len(m.Params) < 1 {
+		return
+	}
+	nick := m.Nick()
+	new_nick := m.Params[0]
+	channels := []string{}
+	// irc-go has already followed our own change, so it's ours when
+	// the new nick is irc-go's current one
+	if nick != new_nick && new_nick == c.currentNick() {
+		// save only a nick we asked for, as the server spells it, not a
+		// server's rename
+		if c.requestedNick != "" && strings.EqualFold(new_nick, c.requestedNick) {
+			c.requestedNick = ""
+			c.Config.Nick = new_nick
+			c.configChanged(e, "Nick")
+		}
+		// either way it's our nick now, and irc-go shouldn't change it
+		c.keepNick(e)
+	}
+	for _, channel := range c.Channels {
+		if _, ok := channel.Nicks[nick]; ok {
+			channel.Nicks[new_nick] = channel.Nicks[nick]
+			delete(channel.Nicks, nick)
+			channels = append(channels, channel.Name)
 		}
 	}
+	e.multi = multiMessage(c, m, channels)
+}
 
-	handlers["PING"] = func(c *IRCClient, m *IRCMessage) {
-		c.Send(fmt.Sprintf("PONG %s", m.Params[0]))
+// onLine gets every line from the server, after irc-go's own handlers.
+func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
+	if err != nil {
+		// irc-go has logged it already
+		if c.debug > 0 {
+			c.log.Printf("unparseable line %q: %v", raw, err)
+		}
+		return
 	}
+	msg := newIRCMessage(m)
+	c.Lock()
+	c.annotate(msg)
+	c.Unlock()
+	Events <- &IRCClientMessage{Id: c.Id, Message: msg}
+}
 
-	handlers["NOTICE"] = func(c *IRCClient, m *IRCMessage) {
-		m.Direct = m.Params[0] == c.Nick
+// run runs h for m with c locked, and returns what h wants published;
+// pass it to publishEffects once c is unlocked. A message from a
+// connection that's no longer c's is ignored.
+func (c *IRCClient) run(conn *ircevent.Connection, h handler, m ircmsg.Message) effects {
+	c.Lock()
+	// deferred, so a handler that panics (irc-go recovers it) can't
+	// leave c locked
+	defer c.Unlock()
+
+	var e effects
+	if c.conn == conn {
+		h(c, m, &e)
 	}
+	return e
+}
 
-	handlers["PRIVMSG"] = func(c *IRCClient, m *IRCMessage) {
-		m.Direct = m.Params[0] == c.Nick
-		m.Prefix.Self = m.Prefix.User == c.User && m.Prefix.Name == c.Nick
-		text := m.Params[1]
-		if len(text) >= 7 && text[0:7] == "\x01VERSION" {
-			log.Printf("%v", m)
+// annotate marks a PRIVMSG or NOTICE sent to our nick as Direct, and a
+// PRIVMSG from us as Self. c is locked.
+func (c *IRCClient) annotate(m *IRCMessage) {
+	if m.Prefix == nil {
+		m.Prefix = &IRCPrefix{}
+	}
+	if (m.Command == "PRIVMSG" || m.Command == "NOTICE") && len(m.Params) > 0 {
+		nick := c.currentNick()
+		m.Direct = m.Params[0] == nick
+		if m.Command == "PRIVMSG" {
+			m.Prefix.Self = m.Prefix.Name != "" && m.Prefix.User == c.User && m.Prefix.Name == nick
 		}
 	}
+}
 
-	handlers["NICK"] = func(c *IRCClient, m *IRCMessage) {
-		nick := m.Prefix.Name
-		new_nick := m.Params[0]
-		channels := []string{}
-		if nick == c.Nick {
-			c.Nick = new_nick
-			// save only a nick we asked for, not a server's rename
-			if c.requestedNick != "" && strings.EqualFold(new_nick, c.requestedNick) {
-				c.requestedNick = ""
-				c.Config.Nick = new_nick
-				c.configChanged("Nick")
-			}
-		}
-		for _, channel := range c.Channels {
-			if _, ok := channel.Nicks[nick]; ok {
-				channel.Nicks[new_nick] = channel.Nicks[nick]
-				delete(channel.Nicks, nick)
-				channels = append(channels, channel.Name)
-			}
-		}
-		Multi <- &IRCClientMultiMessage{
-			Message:  m,
-			Id:       c.Id,
-			Channels: channels,
-		}
+// publishEffects sends the multi message and config changes e holds. c
+// must be unlocked: the channels may block.
+func (c *IRCClient) publishEffects(e effects) {
+	if e.multi != nil {
+		Multi <- e.multi
 	}
-
-	handlers["CAP"] = func(c *IRCClient, m *IRCMessage) {
-		if len(m.Params) < 2 {
-			return
-		}
-
-		switch m.Params[1] {
-		case "LS":
-			if m.Params[2] == "*" {
-				if len(m.Params) > 3 {
-					c.CapAdd(strings.Split(m.Params[3], " "))
-				}
-			} else {
-				c.CapAdd(strings.Split(m.Params[2], " "))
-				c.CapListDone()
-			}
-		case "ACK":
-			c.CapAck(strings.Split(m.Params[2], " "))
-		case "NAK":
-			c.CapNak(strings.Split(m.Params[2], " "))
-		case "NEW":
-			if len(m.Params) > 3 {
-				c.CapAdd(strings.Split(m.Params[3], " "))
-			}
-		case "DEL":
-			if len(m.Params) > 3 {
-				c.CapDel(strings.Split(m.Params[3], " "))
-			}
-		}
-	}
-
-	handlers["AUTHENTICATE"] = func(c *IRCClient, m *IRCMessage) {
-		c.SASLAuth(m.Params[0])
-	}
-
-	e := []string{"902", "904", "905", "906"}
-	for _, i := range e {
-		handlers[i] = func(c *IRCClient, m *IRCMessage) {
-			c.SASLAuthFailed(m.Params[0])
-		}
-	}
-
-	handlers["903"] = func(c *IRCClient, m *IRCMessage) {
-		c.SASLAuthSuccess()
+	for _, change := range e.changes {
+		ConfigChanges <- change
 	}
 }

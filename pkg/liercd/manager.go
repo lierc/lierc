@@ -264,9 +264,12 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		if nick, ok := requestedNick(line); ok {
 			c.RequestNick(nick)
 		}
+		// also before sending: a connection that drops after the send
+		// no longer knows its caps
+		echoAcked := c.CapEnabled("echo-message")
 		queued := c.Send(line)
 
-		if shouldEcho(line, queued, c.CapEnabled("echo-message")) {
+		if shouldEcho(line, queued, echoAcked) {
 			if event := m.PrivmsgEvent(c, line); event != nil {
 				event.Message.Prefix.Self = true
 				lierc.Events <- event

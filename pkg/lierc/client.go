@@ -58,7 +58,6 @@ type IRCClient struct {
 	Connected     bool
 	StatusMessage string
 	Retries       int
-	prefix        [][]byte
 	quitting      bool
 	// stopped is why liercd stopped reconnecting (the server refused
 	// every nick it could try), or "" while it reconnects as usual
@@ -83,10 +82,6 @@ type IRCClient struct {
 	gaveUp   string
 	// when the server sent 001, or zero before it; see stableAfter
 	welcomedAt time.Time
-	// a copy of conn.AcknowledgedCaps() taken when Connect returns
-	// (finishSetup), kept between attempts. The API's messages are refused
-	// until then, so it's always known whether the server echoes them.
-	ackedCaps map[string]string
 
 	// sender is the current attempt's send queue, set only while
 	// connected, so Send drops lines while disconnected. It's atomic
@@ -133,7 +128,6 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		User:          config.User,
 		Host:          hostname,
 		Id:            Id,
-		prefix:        defaultPrefix,
 		log:           log.New(ircLogOutput, Id+" ", log.LstdFlags),
 	}
 
@@ -197,36 +191,53 @@ func (c *IRCClient) isupport() map[string]string {
 	return c.conn.ISupport()
 }
 
-// setPrefix takes the nick prefixes from isupport's PREFIX, or the
-// default when it's missing or malformed. c is locked.
-func (c *IRCClient) setPrefix(isupport map[string]string) {
-	if prefix, ok := parsePrefix(isupport["PREFIX"]); ok {
-		c.prefix = prefix
-	} else {
-		c.prefix = defaultPrefix
-	}
+// prefixes is the current connection's nick prefixes, from its ISUPPORT
+// PREFIX; the default before registration and between attempts. c is
+// locked.
+func (c *IRCClient) prefixes() [][]byte {
+	return prefixesFrom(c.isupport())
 }
 
-// CapEnabled reports whether the server acked the cap on the last
-// connection to register. It takes c's read lock: don't call it with c
-// locked (from a handler, say).
+// ackedCaps is the current connection's acked caps, nil until it has
+// registered. c is locked. The map is irc-go's: never write to it. It's
+// read only once Connect has returned (Registered, set by finishSetup):
+// until then irc-go's Connect goroutine may still be writing it, which can
+// overlap our handling of 001, 005 or 376 when a server welcomes us
+// early, and concurrent map access is fatal to the whole process.
+func (c *IRCClient) ackedCaps() map[string]string {
+	if !c.Registered || c.conn == nil {
+		return nil
+	}
+	return c.conn.AcknowledgedCaps()
+}
+
+// CapEnabled reports whether the server acked the cap on the current
+// connection, false until it has registered. It takes c's read lock:
+// don't call it with c locked (from a handler, say).
 func (c *IRCClient) CapEnabled(name string) bool {
 	c.RLock()
 	defer c.RUnlock()
-	_, ok := c.ackedCaps[name]
+	_, ok := c.ackedCaps()[name]
 	return ok
 }
 
 func (c *IRCClient) NicksWithPrefix(channel *IRCChannel) []string {
+	prefixes := c.prefixes()
 	names := make([]string, 0)
 	for nick, mode := range channel.Nicks {
-		names = append(names, c.NickPrefix(mode)+nick)
+		names = append(names, nickPrefix(prefixes, mode)+nick)
 	}
 	return names
 }
 
 func (c *IRCClient) NickPrefix(mode []byte) string {
-	for _, mapping := range c.prefix {
+	return nickPrefix(c.prefixes(), mode)
+}
+
+// nickPrefix is the symbol for the highest of a nick's modes, in
+// prefixes' order, or "" for none.
+func nickPrefix(prefixes [][]byte, mode []byte) string {
+	for _, mapping := range prefixes {
 		if bytes.IndexByte(mode, mapping[1]) != -1 {
 			return string(mapping[0])
 		}
@@ -235,7 +246,7 @@ func (c *IRCClient) NickPrefix(mode []byte) string {
 }
 
 func (c *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
-	for _, mapping := range c.prefix {
+	for _, mapping := range c.prefixes() {
 		if prefix == mapping[0] {
 			return mapping[1], true
 		}
@@ -244,7 +255,7 @@ func (c *IRCClient) NickPrefixMode(prefix byte) (byte, bool) {
 }
 
 func (c *IRCClient) IsNickMode(mode byte) bool {
-	for _, mapping := range c.prefix {
+	for _, mapping := range c.prefixes() {
 		if mode == mapping[1] {
 			return true
 		}
@@ -296,11 +307,11 @@ func (c *IRCClient) ClientData() *IRCClientData {
 	}
 }
 
-// capsAcked is the caps the server acknowledged on the last connection
-// to register, nil before any has.
+// capsAcked is the caps the server acknowledged on the current
+// connection, nil until it has registered.
 func (c *IRCClient) capsAcked() []string {
 	var caps []string
-	for k := range c.ackedCaps {
+	for k := range c.ackedCaps() {
 		caps = append(caps, k)
 	}
 	return caps

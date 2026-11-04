@@ -170,29 +170,14 @@ func (c *IRCClient) addHandlers(conn *ircevent.Connection) {
 }
 
 // finishSetup runs once per connection, when Connect has returned: irc-go
-// has registered, and its acked caps and ISUPPORT are final. c is locked
+// has registered, and its acked caps and ISUPPORT are final, so from
+// Registered on they're read from irc-go (ackedCaps, isupport). c is locked
 // and c.conn is the connection. Everything that waits for registration
 // happens here together, so the API is never let in before we know
 // whether the server echoes our messages.
 func (c *IRCClient) finishSetup() {
-	c.copyAckedCaps()
-	c.setPrefix(c.isupport())
 	c.Registered = true
 	c.Join()
-}
-
-// copyAckedCaps copies the connection's acked caps. c is locked and
-// c.conn is set. Call it only after Connect has returned: AcknowledgedCaps
-// returns irc-go's own map, which the Connect goroutine writes once all
-// CAP REQs are answered or at 376/422, whichever is first. A server that
-// sends 001 early can make that write overlap our reading of 001, 005 or
-// 376, and concurrent map access is fatal to the whole process.
-func (c *IRCClient) copyAckedCaps() {
-	caps := make(map[string]string)
-	for k, v := range c.conn.AcknowledgedCaps() {
-		caps[k] = v
-	}
-	c.ackedCaps = caps
 }
 
 // onConnected runs once the socket (and TLS) is up, before registration.

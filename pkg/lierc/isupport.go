@@ -6,6 +6,15 @@ import "strings"
 // Each entry is {symbol, mode}.
 var defaultPrefix = [][]byte{{'@', 'o'}, {'+', 'v'}, {'%', 'h'}}
 
+// prefixesFrom is the nick prefixes an ISUPPORT map's PREFIX gives, or
+// the default when it's missing or malformed.
+func prefixesFrom(isupport map[string]string) [][]byte {
+	if prefix, ok := parsePrefix(isupport["PREFIX"]); ok {
+		return prefix
+	}
+	return defaultPrefix
+}
+
 // parsePrefix parses an ISUPPORT PREFIX value such as "(ov)@+" into
 // {symbol, mode} pairs. It returns false if the value is malformed.
 func parsePrefix(value string) ([][]byte, bool) {

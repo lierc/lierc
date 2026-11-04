@@ -975,10 +975,10 @@ func TestNickResetOnReconnect(t *testing.T) {
 	waitRegistered(t, c)
 }
 
-// The acked caps are known from 001, before the end of registration, and
-// kept while reconnecting, so the manager doesn't echo messages itself;
-// a message sent while disconnected isn't queued, so it isn't echoed.
-func TestAckedCapsKept(t *testing.T) {
+// The acked caps are read from irc-go only once Connect has returned, and
+// are unknown again once the connection ends; a message sent while
+// disconnected isn't queued, so it isn't echoed either way.
+func TestAckedCapsWhileRegistered(t *testing.T) {
 	fastRetries(t)
 	retryUnit = time.Hour
 	srv := newFakeServer(t)
@@ -995,18 +995,18 @@ func TestAckedCapsKept(t *testing.T) {
 	// irc-go's acked caps are only read once Connect has returned, at the
 	// end of MOTD, so on a first connection they're unknown until then
 	if c.CapEnabled("echo-message") {
-		t.Error("echo-message copied before Connect returned")
+		t.Error("echo-message read before Connect returned")
 	}
 	fc.send(":s 376 me :End of MOTD")
 	waitRegistered(t, c)
 	if !c.CapEnabled("echo-message") {
-		t.Error("echo-message not copied when registered")
+		t.Error("echo-message unknown when registered")
 	}
 
 	fc.close()
 	d.nextMessage(t, "Reconnecting in 1h0m0s")
-	if !c.CapEnabled("echo-message") {
-		t.Error("echo-message forgotten while disconnected")
+	if c.CapEnabled("echo-message") {
+		t.Error("echo-message still known while disconnected")
 	}
 	if c.Send("PRIVMSG #a :hi") {
 		t.Error("Send while disconnected was queued")
@@ -1078,7 +1078,7 @@ func TestRegisteredAfterSetup(t *testing.T) {
 	fc.expect(t, "JOIN #a")
 	waitRegistered(t, c)
 	c.RLock()
-	prefix := c.prefix
+	prefix := c.prefixes()
 	c.RUnlock()
 	if want := [][]byte{{'~', 'q'}, {'@', 'o'}, {'+', 'v'}}; !reflect.DeepEqual(prefix, want) {
 		t.Errorf("prefix %q, want %q", prefix, want)

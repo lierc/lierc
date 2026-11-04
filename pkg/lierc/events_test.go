@@ -68,8 +68,7 @@ func TestHandlersShortParams(t *testing.T) {
 
 // PREFIX comes from the ISUPPORT map; a missing or malformed one means
 // the default.
-func TestSetPrefix(t *testing.T) {
-	c := configClient()
+func TestPrefixesFrom(t *testing.T) {
 	for _, tc := range []struct {
 		isupport map[string]string
 		want     [][]byte
@@ -80,10 +79,8 @@ func TestSetPrefix(t *testing.T) {
 		{map[string]string{"PREFIX": ""}, defaultPrefix},
 		{map[string]string{"PREFIX": "(qov)~@+"}, [][]byte{{'~', 'q'}, {'@', 'o'}, {'+', 'v'}}},
 	} {
-		c.prefix = [][]byte{{'!', 'z'}}
-		c.setPrefix(tc.isupport)
-		if !reflect.DeepEqual(c.prefix, tc.want) {
-			t.Errorf("%v: prefix %q, want %q", tc.isupport, c.prefix, tc.want)
+		if got := prefixesFrom(tc.isupport); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%v: prefix %q, want %q", tc.isupport, got, tc.want)
 		}
 	}
 }

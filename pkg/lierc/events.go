@@ -57,8 +57,9 @@ func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientM
 // onWelcome handles 001. irc-go takes our nick from it, and with KeepNick
 // never tries to win the configured one back after we registered under a
 // fallback. The rest of setup waits for Connect to return (finishSetup).
+// The backoff is reset when the connection ends, if it lasted (stableAfter).
 func (c *IRCClient) onWelcome(m ircmsg.Message, e *effects) {
-	c.Retries = 0
+	c.welcomedAt = time.Now()
 }
 
 // onNickRefused handles 432, 433 and 437, a nick refused. During

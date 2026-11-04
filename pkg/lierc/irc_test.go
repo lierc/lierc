@@ -394,6 +394,10 @@ func TestNickTriesCapped(t *testing.T) {
 
 func TestDisconnectReconnects(t *testing.T) {
 	fastRetries(t)
+	// every registered connection counts as having lasted
+	old := stableAfter
+	stableAfter = 0
+	t.Cleanup(func() { stableAfter = old })
 	srv := newFakeServer(t)
 	d := drain(t)
 	c := newTestClient(t, srv.config("me"))
@@ -408,7 +412,8 @@ func TestDisconnectReconnects(t *testing.T) {
 	fc = srv.accept(t)
 	fc.register(t, "me")
 	waitRegistered(t, c)
-	// 001 reset the retries, so this is the first retry again
+	// a registered connection that lasted resets the retries, so this is
+	// the first retry again
 	fc.close()
 	d.next(t, "disconnected", disconnected)
 	d.nextMessage(t, "Reconnecting in 20ms")
@@ -1162,4 +1167,41 @@ func TestNickRequestClearedOnReconnect(t *testing.T) {
 	if requested != "" {
 		t.Errorf("requestedNick %q", requested)
 	}
+}
+
+// A connection the server drops soon after 001 doesn't reset the backoff,
+// so a server that kills us on registering isn't retried every
+// retryUnit; one that lasted stableAfter does.
+func TestBackoffResetOnlyAfterStableConnection(t *testing.T) {
+	cycle := func(t *testing.T, srv *fakeServer, d *drained, want string) {
+		t.Helper()
+		fc := srv.accept(t)
+		fc.register(t, "me")
+		d.nextMessage(t, "Connected")
+		fc.close()
+		d.next(t, "disconnected", disconnected)
+		d.nextMessage(t, want)
+	}
+
+	t.Run("dropped at once", func(t *testing.T) {
+		fastRetries(t)
+		srv := newFakeServer(t)
+		d := drain(t)
+		newTestClient(t, srv.config("me"))
+		cycle(t, srv, d, "Reconnecting in 20ms")
+		cycle(t, srv, d, "Reconnecting in 40ms")
+		cycle(t, srv, d, "Reconnecting in 60ms")
+	})
+
+	t.Run("lasted", func(t *testing.T) {
+		fastRetries(t)
+		old := stableAfter
+		stableAfter = 0
+		t.Cleanup(func() { stableAfter = old })
+		srv := newFakeServer(t)
+		d := drain(t)
+		newTestClient(t, srv.config("me"))
+		cycle(t, srv, d, "Reconnecting in 20ms")
+		cycle(t, srv, d, "Reconnecting in 20ms")
+	})
 }

@@ -81,6 +81,8 @@ type IRCClient struct {
 	regNick  string
 	regTries int
 	gaveUp   string
+	// when the server sent 001, or zero before it; see stableAfter
+	welcomedAt time.Time
 	// a copy of conn.AcknowledgedCaps() taken when Connect returns
 	// (finishSetup), kept between attempts. The API's messages are refused
 	// until then, so it's always known whether the server echoes them.

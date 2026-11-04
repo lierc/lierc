@@ -21,7 +21,11 @@ import (
 
 // Tunables, package vars so tests can shorten them.
 var (
-	retryUnit      = 15 * time.Second // backoff step; the cap is 20 × retryUnit
+	retryUnit = 15 * time.Second // backoff step; the cap is 20 × retryUnit
+	// stableAfter is how long a registered connection has to last for its
+	// end to reset the backoff; a server that drops us sooner (a K-line,
+	// a throttle) keeps backing off
+	stableAfter    = 5 * time.Minute
 	ircTimeout     = 2 * time.Minute
 	ircKeepAlive   = 4 * time.Minute
 	destroyTimeout = 2 * time.Second
@@ -127,6 +131,7 @@ func (c *IRCClient) connect() {
 	c.regNick = config.Nick
 	c.regTries = 0
 	c.gaveUp = ""
+	c.welcomedAt = time.Time{}
 	c.Registered = false
 	c.Unlock()
 
@@ -261,6 +266,9 @@ func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg, logMsg
 		c.statusMu.Unlock()
 		close(done)
 		return
+	}
+	if !c.welcomedAt.IsZero() && time.Since(c.welcomedAt) >= stableAfter {
+		c.Retries = 0
 	}
 	c.Retries++
 	delay := backoff(c.Retries)

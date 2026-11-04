@@ -797,6 +797,41 @@ func TestRefusedNickNotRetried(t *testing.T) {
 	}
 }
 
+// A 435 (banned in a channel) or 438 (too fast) refusing the requested
+// nick ends the request like a 433, so a later rename to that nick (by
+// services, say) isn't saved as though it were asked for.
+func TestNickChangeRefusalsEndRequest(t *testing.T) {
+	for _, refusal := range []string{
+		":s 435 me taken #chan :Cannot change nickname while banned on channel",
+		":s 438 me taken :Nick change too fast. Please wait 20 seconds.",
+	} {
+		t.Run(refusal[3:6], func(t *testing.T) {
+			fastRetries(t)
+			srv := newFakeServer(t)
+			d := drain(t)
+			c := newTestClient(t, d, srv.config("me"))
+			fc := srv.accept(t)
+			fc.register(t, "me")
+			waitRegistered(t, c)
+
+			requestNick(t, c, "taken")
+			fc.expect(t, "NICK taken")
+			fc.send(refusal)
+			fc.send(":me!u@h NICK taken")
+			eventually(t, "rename handled", func() bool { return c.CurrentNick() == "taken" })
+			c.RLock()
+			requested := c.requestedNick
+			c.RUnlock()
+			if requested != "" {
+				t.Errorf("requestedNick %q", requested)
+			}
+			if got := changed(t, d.changed()); got != "" {
+				t.Errorf("published %s", got)
+			}
+		})
+	}
+}
+
 // Two quick requests: the server confirming the first after the second
 // was sent mustn't send us back to the first. Nothing at all is sent in
 // reply to a confirmation (irc-go has KeepNick), and keepalives don't

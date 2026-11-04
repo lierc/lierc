@@ -30,6 +30,8 @@ func eachHandler(add func(command string, h handler)) {
 	add(ircevent.ERR_ERRONEUSNICKNAME, (*IRCClient).onNickRefused)
 	add(ircevent.ERR_NICKNAMEINUSE, (*IRCClient).onNickRefused)
 	add(ircevent.ERR_UNAVAILRESOURCE, (*IRCClient).onNickRefused)
+	add(errBanNickChange, (*IRCClient).onNickChangeRefused)
+	add(errNickTooFast, (*IRCClient).onNickChangeRefused)
 	add(ircevent.RPL_NAMREPLY, (*IRCClient).onNames)
 	add(ircevent.RPL_ENDOFNAMES, (*IRCClient).onEndOfNames)
 	add("MODE", (*IRCClient).onMode)
@@ -76,8 +78,32 @@ func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
 		c.registrationNickRefused(m)
 		return
 	}
-	// a short reply ("433 * :reason") doesn't say which nick; it can't
-	// be the request's
+	c.endNickRequest(m)
+}
+
+// Nick change refusals irc-go has no names for, since they aren't in the
+// RFCs; most servers (solanum, hybrid, ircu, Unreal) send them.
+const (
+	errBanNickChange = "435" // can't change nick while banned in a channel
+	errNickTooFast   = "438" // nick changed too recently
+)
+
+// onNickChangeRefused handles 435 and 438, a nick change refused after
+// registration: a refusal of the nick the user asked for ends the
+// request, as for 433. Where the nick appears varies by server; a reply
+// that doesn't have it second leaves the request until the next NICK or
+// reconnect.
+func (c *IRCClient) onNickChangeRefused(m ircmsg.Message, e *effects) {
+	if c.conn == nil || c.conn.CurrentNick() == "" {
+		return
+	}
+	c.endNickRequest(m)
+}
+
+// endNickRequest ends the user's nick request if m, a refusal, names the
+// requested nick. A short reply ("433 * :reason") doesn't say which
+// nick; it can't be the request's.
+func (c *IRCClient) endNickRequest(m ircmsg.Message) {
 	if len(m.Params) >= 3 && c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
 		c.requestedNick = ""
 	}

@@ -1,8 +1,14 @@
 package logger
 
 import (
+	"github.com/ergochat/irc-go/ircevent"
+
 	"github.com/lierc/lierc/pkg/lierc"
 )
+
+// rplStatsConn is 250, the highest connection count, which irc-go has no
+// name for.
+const rplStatsConn = "250"
 
 // logKind is how a message from the chats topic is handled.
 type logKind int
@@ -60,9 +66,15 @@ func logType(m *lierc.IRCMessage) logKind {
 		return logSkip
 
 	case "ERROR", "CONNECT", "DISCONNECT",
-		"001", "002", "003", "004", "005", // welcome
-		"250", "251", "252", "253", "254", "255", "265", "266", // user counts
-		"372", "375", "376": // MOTD
+		// welcome
+		ircevent.RPL_WELCOME, ircevent.RPL_YOURHOST, ircevent.RPL_CREATED,
+		ircevent.RPL_MYINFO, ircevent.RPL_ISUPPORT,
+		// user counts
+		rplStatsConn, ircevent.RPL_LUSERCLIENT, ircevent.RPL_LUSEROP,
+		ircevent.RPL_LUSERUNKNOWN, ircevent.RPL_LUSERCHANNELS, ircevent.RPL_LUSERME,
+		ircevent.RPL_LOCALUSERS, ircevent.RPL_GLOBALUSERS,
+		// MOTD
+		ircevent.RPL_MOTD, ircevent.RPL_MOTDSTART, ircevent.RPL_ENDOFMOTD:
 		return logStatus
 	}
 

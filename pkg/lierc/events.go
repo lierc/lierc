@@ -26,21 +26,21 @@ type handler func(c *IRCClient, m ircmsg.Message, e *effects)
 
 // eachHandler calls add with each command we handle and its handler.
 func eachHandler(add func(command string, h handler)) {
-	add("001", (*IRCClient).onWelcome)
-	add("432", (*IRCClient).onNickRefused)
-	add("433", (*IRCClient).onNickRefused)
-	add("437", (*IRCClient).onNickRefused)
-	add("353", (*IRCClient).onNames)
-	add("366", (*IRCClient).onEndOfNames)
+	add(ircevent.RPL_WELCOME, (*IRCClient).onWelcome)
+	add(ircevent.ERR_ERRONEUSNICKNAME, (*IRCClient).onNickRefused)
+	add(ircevent.ERR_NICKNAMEINUSE, (*IRCClient).onNickRefused)
+	add(ircevent.ERR_UNAVAILRESOURCE, (*IRCClient).onNickRefused)
+	add(ircevent.RPL_NAMREPLY, (*IRCClient).onNames)
+	add(ircevent.RPL_ENDOFNAMES, (*IRCClient).onEndOfNames)
 	add("MODE", (*IRCClient).onMode)
 	add("JOIN", (*IRCClient).onJoin)
 	add("KICK", (*IRCClient).onKick)
 	add("PART", (*IRCClient).onPart)
 	add("QUIT", (*IRCClient).onQuit)
 	add("TOPIC", (*IRCClient).onTopic)
-	add("332", (*IRCClient).onTopicReply)
-	add("324", (*IRCClient).onChannelModes)
-	add("333", (*IRCClient).onTopicWhoTime)
+	add(ircevent.RPL_TOPIC, (*IRCClient).onTopicReply)
+	add(ircevent.RPL_CHANNELMODEIS, (*IRCClient).onChannelModes)
+	add(ircevent.RPL_TOPICTIME, (*IRCClient).onTopicWhoTime)
 	add("PRIVMSG", (*IRCClient).onPrivmsg)
 	add("NICK", (*IRCClient).onNick)
 }
@@ -110,7 +110,7 @@ func (c *IRCClient) registrationNickRefused(m ircmsg.Message) {
 		refused = m.Params[1]
 	}
 	reason := m.Params[len(m.Params)-1]
-	if m.Command == "432" && strings.EqualFold(refused, c.Config.Nick) {
+	if m.Command == ircevent.ERR_ERRONEUSNICKNAME && strings.EqualFold(refused, c.Config.Nick) {
 		c.stop(fmt.Sprintf("Nickname %q isn't allowed by the server: %s", refused, reason))
 		return
 	}
@@ -123,7 +123,7 @@ func (c *IRCClient) registrationNickRefused(m ircmsg.Message) {
 
 	var next string
 	switch {
-	case m.Command == "432":
+	case m.Command == ircevent.ERR_ERRONEUSNICKNAME:
 		base := []rune(strings.TrimRight(refused, "_"))
 		if len(base) <= 1 {
 			c.stop("Couldn't find a nickname the server allows: " + reason)

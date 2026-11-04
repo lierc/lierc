@@ -15,3 +15,5 @@ require (
 	github.com/golang/snappy v1.0.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 )
+
+replace github.com/ergochat/irc-go => github.com/lierc/irc-go v0.7.1-lierc.1

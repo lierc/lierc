@@ -11,13 +11,11 @@ import (
 	"github.com/ergochat/irc-go/ircmsg"
 )
 
-// effects is what handling one message does once c is unlocked: what it
-// publishes besides the line itself (which the raw callback publishes),
-// and the nick irc-go should prefer (see keepNick), if that changes.
+// effects is what handling one message publishes besides the line itself
+// (which the raw callback publishes), sent after c is unlocked.
 type effects struct {
-	multi      *IRCClientMultiMessage // QUIT and NICK
-	changes    []*IRCConfigChange
-	preferNick string
+	multi   *IRCClientMultiMessage // QUIT and NICK
+	changes []*IRCConfigChange
 }
 
 // A handler updates c's state for one message from the server, with c
@@ -56,22 +54,19 @@ func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientM
 	}
 }
 
-// onWelcome handles 001. irc-go takes our nick from it, and we have irc-go
-// keep that nick, so it doesn't try to win the configured one back after
-// registering under a fallback. The rest of setup waits for Connect to
-// return (finishSetup).
+// onWelcome handles 001. irc-go takes our nick from it, and with KeepNick
+// never tries to win the configured one back after we registered under a
+// fallback. The rest of setup waits for Connect to return (finishSetup).
 func (c *IRCClient) onWelcome(m ircmsg.Message, e *effects) {
 	c.Retries = 0
-	c.keepNick(e)
 }
 
 // onNickRefused handles 432, 433 and 437, a nick refused. During
 // registration (before 001) it picks the next nick to try (see
-// registrationNickRefused); irc-go's own handler for these is removed (see
-// addHandlers). Afterwards, a refusal of the nick the user asked for ends
-// the request, and irc-go goes back to preferring the nick we have (it
-// prefers a pending request's; see keepNick). The request was sent as a
-// plain NICK, so irc-go never asked for it and won't retry it.
+// registrationNickRefused); with KeepNick irc-go has no handler of its
+// own for these. Afterwards, a refusal of the nick the user asked for ends
+// the request; nothing else needs undoing, since the request was sent as a
+// plain NICK and irc-go never asks for a nick itself.
 func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
 	if len(m.Params) < 2 || c.conn == nil {
 		return
@@ -84,8 +79,6 @@ func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
 	// be the request's
 	if len(m.Params) >= 3 && c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
 		c.requestedNick = ""
-		// back to preferring the nick we have
-		c.keepNick(e)
 	}
 }
 
@@ -404,8 +397,6 @@ func (c *IRCClient) onNick(m ircmsg.Message, e *effects) {
 			c.Config.Nick = new_nick
 			c.configChanged(e, "Nick")
 		}
-		// either way it's our nick now, and irc-go shouldn't change it
-		c.keepNick(e)
 	}
 	for _, channel := range c.Channels {
 		if _, ok := channel.Nicks[nick]; ok {

@@ -63,6 +63,7 @@ func (c *IRCClient) connect() {
 	conn := &ircevent.Connection{
 		Server:      config.Server(),
 		Nick:        config.Nick,
+		KeepNick:    true, // our nick rules (registrationNickRefused), not irc-go's
 		User:        user,
 		RealName:    user,
 		RequestCaps: []string{CAP_ECHO_MESSAGE, CAP_MESSAGE_TAGS},
@@ -95,8 +96,8 @@ func (c *IRCClient) connect() {
 	var addHandlers sync.Once
 	conn.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		// irc-go has installed its own callbacks by now (Connect does
-		// that just before dialing), so ours can replace its nick-in-use
-		// handling
+		// that just before dialing), so ours run after them and see the
+		// state they've updated, such as the current nick
 		addHandlers.Do(func() { c.addHandlers(conn) })
 		ctx, cancelCtx := context.WithCancel(ctx)
 		defer cancelCtx()
@@ -152,22 +153,13 @@ func (c *IRCClient) connect() {
 }
 
 // addHandlers registers our handlers as irc-go callbacks on conn. It
-// runs from conn's dial, after irc-go has installed its own callbacks:
-// irc-go's 433 and 437 handlers (which try nick_0, nick_1, ... during
-// registration) are removed first, so ours (onNickRefused) are the only
-// ones.
+// runs from conn's dial, after irc-go has installed its own callbacks, so
+// ours run after them. With KeepNick irc-go has no 433 or 437 handlers;
+// ours (onNickRefused) are the only ones.
 func (c *IRCClient) addHandlers(conn *ircevent.Connection) {
-	conn.ClearCallback("433")
-	conn.ClearCallback("437")
 	eachHandler(func(cmd string, h handler) {
 		conn.AddCallback(cmd, func(m ircmsg.Message) {
-			e := c.run(conn, h, m)
-			// with c unlocked: SetNick can block on irc-go's write
-			// queue, and the API needs c meanwhile
-			if e.preferNick != "" {
-				conn.SetNick(e.preferNick)
-			}
-			c.publishEffects(e)
+			c.publishEffects(c.run(conn, h, m))
 		})
 	})
 }

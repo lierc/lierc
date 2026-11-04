@@ -793,9 +793,9 @@ func TestRefusedNickNotRetried(t *testing.T) {
 }
 
 // Two quick requests: the server confirming the first after the second
-// was sent mustn't send us back to the first. irc-go is set to prefer
-// the pending request (SetNick sends NICK b again, which is harmless),
-// not the nick just confirmed.
+// was sent mustn't send us back to the first. Nothing at all is sent in
+// reply to a confirmation (irc-go has KeepNick), and keepalives don't
+// ask for either nick.
 func TestLateConfirmationKeepsLatestRequest(t *testing.T) {
 	fastRetries(t)
 	fastKeepAlive(t)
@@ -811,11 +811,9 @@ func TestLateConfirmationKeepsLatestRequest(t *testing.T) {
 	requestNick(t, c, "b")
 	fc.expect(t, "NICK b")
 	fc.send(":me!u@h NICK a")
-	if got := fc.expect(t, "NICK "); got != "NICK b" {
-		t.Fatalf("after a late confirmation of a: %q", got)
-	}
+	fc.expectNo(t, "NICK", 600*time.Millisecond)
 	fc.send(":a!u@h NICK b")
-	fc.expectNo(t, "NICK a", 600*time.Millisecond)
+	fc.expectNo(t, "NICK", 600*time.Millisecond)
 
 	if got, want := changed(t, d.changed()), `{"Id":"c1","Config":{"Nick":"b"}}`; got != want {
 		t.Errorf("published %s, want %s", got, want)

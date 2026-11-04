@@ -313,30 +313,6 @@ func (c *IRCClient) RequestNick(nick string) {
 	c.requestedNick = nick
 }
 
-// keepNick makes irc-go prefer the nick we want, so it never changes our
-// nick itself: on each keepalive it asks the server for its preferred
-// nick when that differs from the current one. We want the nick the user
-// asked for while that request is pending, and otherwise the one we
-// have, so a NICK the server confirms late (the user's earlier request)
-// can't send us back to it.
-//
-// irc-go's preferred nick can only be set with SetNick, which also sends
-// NICK <preferred> (harmless: it's the nick we have or the one asked for)
-// and can block on irc-go's write queue. So it's only recorded in e, and
-// set once c is unlocked (see addHandlers). c is locked.
-func (c *IRCClient) keepNick(e *effects) {
-	if c.conn == nil {
-		return
-	}
-	want := c.requestedNick
-	if want == "" {
-		want = c.conn.CurrentNick()
-	}
-	if want != "" && want != c.conn.PreferredNick() {
-		e.preferNick = want
-	}
-}
-
 // configChanged publishes the current value of the given config fields.
 // Called with c locked, from the handlers; the change is sent by publish.
 func (c *IRCClient) configChanged(e *effects, fields ...string) {

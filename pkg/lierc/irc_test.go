@@ -316,6 +316,82 @@ func TestNickInUseAtRegistration(t *testing.T) {
 	}
 }
 
+// A server that cuts a NICK to its nick length refuses the cut nick: the
+// last character before the "_"s becomes one, keeping the length,
+// instead of appending "_" again (which the server would cut back off).
+func TestNickCutAtRegistration(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	drain(t)
+	c := newTestClient(t, srv.config("ninechars"))
+	fc := srv.accept(t)
+	fc.expect(t, "NICK ninechars")
+	fc.send(":s 433 * ninechars :in use")
+	fc.expect(t, "NICK ninechars_")
+	// the server cut ninechars_ to nine characters
+	fc.send(":s 433 * ninechars :in use")
+	if got := fc.expect(t, "NICK "); got != "NICK ninechar_" {
+		t.Fatalf("after a cut nick: %q", got)
+	}
+	// not cut: appended as usual, then cut again
+	fc.send(":s 433 * ninechar_ :in use")
+	fc.expect(t, "NICK ninechar__")
+	fc.send(":s 433 * ninechar_ :in use")
+	if got := fc.expect(t, "NICK "); got != "NICK ninecha__" {
+		t.Fatalf("after a second cut: %q", got)
+	}
+	fc.send(":s CAP * ACK :echo-message")
+	fc.send(":s CAP * ACK :message-tags")
+	fc.expect(t, "CAP END")
+	fc.welcome("ninecha__")
+	waitRegistered(t, c)
+}
+
+// A refusal that doesn't name the nick ("433 * :reason") is for the one
+// sent last; its reason isn't taken for a nick.
+func TestShortNickRefusal(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	drain(t)
+	newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.expect(t, "NICK me")
+	fc.send(":s 433 * :Nickname is already in use")
+	if got := fc.expect(t, "NICK "); got != "NICK me_" {
+		t.Fatalf("after a short 433: %q", got)
+	}
+	fc.send(":s 433 me_ :Nickname is already in use")
+	if got := fc.expect(t, "NICK "); got != "NICK me__" {
+		t.Fatalf("after a second: %q", got)
+	}
+}
+
+// After maxNickTries refusals the attempt is given up with a status
+// saying why, and liercd reconnects later (unlike a refused configured
+// nick, which stops it).
+func TestNickTriesCapped(t *testing.T) {
+	fastRetries(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	nick := "me"
+	fc.expect(t, "NICK "+nick)
+	for i := 0; i < maxNickTries; i++ {
+		fc.send(":s 433 * " + nick + " :in use")
+		nick += "_"
+		if got := fc.expect(t, "NICK "); got != "NICK "+nick {
+			t.Fatalf("try %d: %q", i+1, got)
+		}
+	}
+	fc.send(":s 433 * " + nick + " :in use")
+	d.nextMessage(t, "Couldn't find a free nickname: in use")
+	d.nextMessage(t, "Reconnecting in 20ms")
+	fc = srv.accept(t)
+	// a new attempt starts again from the configured nick
+	fc.expect(t, "NICK me")
+}
+
 func TestDisconnectReconnects(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)
@@ -610,9 +686,13 @@ func TestPortMap(t *testing.T) {
 	fc.register(t, "me")
 	waitRegistered(t, c)
 
-	err, local, remote := c.PortMap()
-	if err != nil {
-		t.Fatal(err)
+	user, local, remote, ok := c.PortMap()
+	if !ok {
+		t.Fatal("not connected")
+	}
+	// the configured username
+	if user != "me" {
+		t.Errorf("user %q, want me", user)
 	}
 	if want := strconv.Itoa(fc.RemoteAddr().(*net.TCPAddr).Port); local != want {
 		t.Errorf("local port %s, want %s", local, want)
@@ -709,6 +789,39 @@ func TestRefusedNickNotRetried(t *testing.T) {
 	c.RUnlock()
 	if requested != "" {
 		t.Errorf("requestedNick %q", requested)
+	}
+}
+
+// Two quick requests: the server confirming the first after the second
+// was sent mustn't send us back to the first. irc-go is set to prefer
+// the pending request (SetNick sends NICK b again, which is harmless),
+// not the nick just confirmed.
+func TestLateConfirmationKeepsLatestRequest(t *testing.T) {
+	fastRetries(t)
+	fastKeepAlive(t)
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := newTestClient(t, srv.config("me"))
+	fc := srv.accept(t)
+	fc.register(t, "me")
+	waitRegistered(t, c)
+
+	requestNick(t, c, "a")
+	fc.expect(t, "NICK a")
+	requestNick(t, c, "b")
+	fc.expect(t, "NICK b")
+	fc.send(":me!u@h NICK a")
+	if got := fc.expect(t, "NICK "); got != "NICK b" {
+		t.Fatalf("after a late confirmation of a: %q", got)
+	}
+	fc.send(":a!u@h NICK b")
+	fc.expectNo(t, "NICK a", 600*time.Millisecond)
+
+	if got, want := changed(t, d.changed()), `{"Id":"c1","Config":{"Nick":"b"}}`; got != want {
+		t.Errorf("published %s, want %s", got, want)
+	}
+	if nick := clientNick(c); nick != "b" {
+		t.Errorf("Nick %q", nick)
 	}
 }
 

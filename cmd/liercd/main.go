@@ -91,7 +91,10 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("Listening on %s", addr)
-	go http.Serve(ln, nil)
+	go func() {
+		// the API failing later is as bad as it failing to start
+		log.Fatal(http.Serve(ln, nil))
+	}()
 
 	<-ctx.Done()
 	log.Print("stopping")

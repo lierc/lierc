@@ -15,6 +15,8 @@ func TestRequestedNick(t *testing.T) {
 		"nick new":           "new",
 		"NICK :new":          "new",
 		"NICK  new ":         "new",
+		"@x=y NICK new":      "new",
+		":me!u@h NICK new":   "new",
 		"NICK":               "",
 		"PRIVMSG #a :NICK x": "",
 		"NICKX y":            "",
@@ -68,29 +70,8 @@ func TestShouldEcho(t *testing.T) {
 	}
 }
 
-// Messages and nick changes wait for the connection to be set up; typing
-// notifications and other lines don't.
-func TestNeedsRegistration(t *testing.T) {
-	for line, want := range map[string]bool{
-		"PRIVMSG #a :hi":                 true,
-		"@+draft/reply=x PRIVMSG #a :hi": true,
-		"notice bob :hi":                 true,
-		"NICK new":                       true,
-		"@+typing=active TAGMSG #a":      false,
-		"JOIN #a":                        false,
-		"PART #a":                        false,
-		"MODE #a":                        false,
-		"":                               false,
-	} {
-		if got := needsRegistration(line); got != want {
-			t.Errorf("%q: %v, want %v", line, got, want)
-		}
-	}
-}
-
-// Before the connection is set up, the raw action refuses a message with
-// 409 and says why, instead of dropping or echoing it. Other lines go on
-// to the client (which drops them while it isn't connected).
+// Before the connection is set up, the raw action refuses every line with
+// 409 and says why, instead of sending, dropping or echoing it.
 func TestRawRefusedUntilRegistered(t *testing.T) {
 	m := NewClientManager()
 	c := &lierc.IRCClient{Id: "c1", Config: &lierc.IRCConfig{Nick: "me"}}
@@ -102,8 +83,9 @@ func TestRawRefusedUntilRegistered(t *testing.T) {
 	}{
 		{"PRIVMSG #a :hi", http.StatusConflict},
 		{"NICK new", http.StatusConflict},
-		{"@+typing=active TAGMSG #a", http.StatusOK},
-		{"JOIN #a", http.StatusOK},
+		{"@+typing=active TAGMSG #a", http.StatusConflict},
+		{"JOIN #a", http.StatusConflict},
+		{"MODE #a", http.StatusConflict},
 	} {
 		w := httptest.NewRecorder()
 		m.HandleCommand(w, httptest.NewRequest("POST", "/c1/raw", strings.NewReader(tc.line)))
@@ -113,5 +95,55 @@ func TestRawRefusedUntilRegistered(t *testing.T) {
 		if tc.code == http.StatusConflict && !strings.Contains(w.Body.String(), notRegistered) {
 			t.Errorf("%q: body %q", tc.line, w.Body.String())
 		}
+	}
+	// once it's set up they're let through
+	c.Lock()
+	c.Registered = true
+	c.Unlock()
+	w := httptest.NewRecorder()
+	m.HandleCommand(w, httptest.NewRequest("POST", "/c1/raw", strings.NewReader("JOIN #a")))
+	if w.Code != http.StatusOK {
+		t.Errorf("registered: status %d, want 200", w.Code)
+	}
+}
+
+func TestRawLine(t *testing.T) {
+	for _, tc := range []struct {
+		body, line string
+		ok         bool
+	}{
+		{"PRIVMSG #a :hi", "PRIVMSG #a :hi", true},
+		{"PRIVMSG #a :hi\r\n", "PRIVMSG #a :hi", true},
+		{"PRIVMSG #a :hi\n", "PRIVMSG #a :hi", true},
+		{"PRIVMSG #a :hi\r\nJOIN #b", "", false},
+		{"PRIVMSG #a :hi\nJOIN #b", "", false},
+		{"PRIVMSG #a :hi\rJOIN #b", "", false},
+	} {
+		line, ok := rawLine([]byte(tc.body))
+		if ok != tc.ok || (ok && line != tc.line) {
+			t.Errorf("rawLine(%q) = %q, %v; want %q, %v", tc.body, line, ok, tc.line, tc.ok)
+		}
+	}
+}
+
+// A raw body with a line break inside is refused with 400, whatever the
+// connection's state: it would go out as more than one line, and the
+// lines after the first would skip the checks.
+func TestRawLineBreakRefused(t *testing.T) {
+	m := NewClientManager()
+	c := &lierc.IRCClient{Id: "c1", Config: &lierc.IRCConfig{Nick: "me"}}
+	m.AddClient(c)
+
+	w := httptest.NewRecorder()
+	m.HandleCommand(w, httptest.NewRequest("POST", "/c1/raw", strings.NewReader("JOIN #a\r\nPRIVMSG #a :hi")))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status %d, want 400", w.Code)
+	}
+	// a trailing line ending is just dropped: this one goes on to the
+	// registration check
+	w = httptest.NewRecorder()
+	m.HandleCommand(w, httptest.NewRequest("POST", "/c1/raw", strings.NewReader("JOIN #a\r\n")))
+	if w.Code != http.StatusConflict {
+		t.Errorf("trailing line ending: status %d, want 409", w.Code)
 	}
 }

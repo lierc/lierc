@@ -123,6 +123,9 @@ func (c *IRCClient) connect() {
 	c.attemptDone = make(chan struct{})
 	c.cancelDial = cancel
 	c.requestedNick = ""
+	c.regNick = config.Nick
+	c.regTries = 0
+	c.gaveUp = ""
 	c.Registered = false
 	c.Unlock()
 
@@ -158,7 +161,13 @@ func (c *IRCClient) addHandlers(conn *ircevent.Connection) {
 	conn.ClearCallback("437")
 	eachHandler(func(cmd string, h handler) {
 		conn.AddCallback(cmd, func(m ircmsg.Message) {
-			c.publishEffects(c.run(conn, h, m))
+			e := c.run(conn, h, m)
+			// with c unlocked: SetNick can block on irc-go's write
+			// queue, and the API needs c meanwhile
+			if e.preferNick != "" {
+				conn.SetNick(e.preferNick)
+			}
+			c.publishEffects(e)
 		})
 	})
 }
@@ -240,6 +249,8 @@ func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg, logMsg
 	c.Registered = false
 	if c.stopped != "" {
 		msg, logMsg = c.stopped, "stopped: "+c.stopped
+	} else if c.gaveUp != "" {
+		msg, logMsg = c.gaveUp, "gave up: "+c.gaveUp
 	}
 	c.Unlock()
 
@@ -361,16 +372,23 @@ func (c *IRCClient) Send(line string) bool {
 	return false
 }
 
-func (c *IRCClient) PortMap() (error, string, string) {
+// PortMap is the connection's entry in liercd's /portmap, for identd: the
+// ident user (the configured username, or the nick without one) and the
+// socket's local and remote ports. ok is false while it isn't connected.
+func (c *IRCClient) PortMap() (user, local, remote string, ok bool) {
 	c.RLock()
 	sock := c.socket
+	user = c.Config.User
+	if user == "" {
+		user = c.Config.Nick
+	}
 	c.RUnlock()
 	if sock == nil {
-		return fmt.Errorf("Not connected"), "", ""
+		return "", "", "", false
 	}
-	_, local, _ := net.SplitHostPort(sock.LocalAddr().String())
-	_, remote, _ := net.SplitHostPort(sock.RemoteAddr().String())
-	return nil, local, remote
+	_, local, _ = net.SplitHostPort(sock.LocalAddr().String())
+	_, remote, _ = net.SplitHostPort(sock.RemoteAddr().String())
+	return user, local, remote, true
 }
 
 // trackedConn records the first read or write error on the socket, for

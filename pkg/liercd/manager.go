@@ -165,12 +165,7 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		portmap := make([][]string, 0)
 
 		for _, c := range m.Clients {
-			err, local, remote := c.PortMap()
-			if err == nil {
-				user := c.Config.User
-				if user == "" {
-					user = c.Config.Nick
-				}
+			if user, local, remote, ok := c.PortMap(); ok {
 				portmap = append(portmap, []string{user, local, remote})
 			}
 		}
@@ -251,10 +246,16 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		line := string(raw)
-		// until the connection is set up we can't tell whether the
-		// server will echo a message, or save a nick change it confirms
-		if needsRegistration(line) && !c.IsRegistered() {
+		line, ok := rawLine(raw)
+		if !ok {
+			http.Error(w, "A line can't contain a line break", http.StatusBadRequest)
+			return
+		}
+		// nothing from the user goes to the server until the connection
+		// is set up: before then the server would refuse most of it
+		// (451), and we couldn't tell whether it will echo a message or
+		// save a nick change it confirms
+		if !c.IsRegistered() {
 			http.Error(w, notRegistered, http.StatusConflict)
 			return
 		}
@@ -288,18 +289,27 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// requestedNick is the nick a raw "NICK <nick>" line asks for.
+// rawLine is a raw body from the API as one IRC line: a trailing line
+// ending is dropped, and ok is false if a CR or LF is left, since the
+// line would go out as more than one.
+func rawLine(body []byte) (line string, ok bool) {
+	line = strings.TrimRight(string(body), "\r\n")
+	return line, !strings.ContainsAny(line, "\r\n")
+}
+
+// requestedNick is the nick a raw NICK line asks for, after any tags
+// and prefix.
 func requestedNick(line string) (string, bool) {
-	f := strings.Fields(line)
-	if len(f) < 2 || !strings.EqualFold(f[0], "NICK") {
+	m, err := lierc.ParseIRCMessage(line)
+	if err != nil || m.Command != "NICK" || len(m.Params) < 1 {
 		return "", false
 	}
-	nick := strings.TrimPrefix(f[1], ":")
+	nick := strings.TrimSpace(m.Params[0])
 	return nick, nick != ""
 }
 
-// notRegistered is the error for a message or nick change sent before the
-// connection is set up. lierc-api shows it to the user as it is.
+// notRegistered is the error for a line sent before the connection is
+// set up. lierc-api shows it to the user as it is.
 const notRegistered = "Not connected yet, try again in a moment"
 
 // command is a raw line's command, uppercased, after any tags and
@@ -316,16 +326,6 @@ func command(line string) string {
 func isMessage(line string) bool {
 	cmd := command(line)
 	return cmd == "PRIVMSG" || cmd == "NOTICE"
-}
-
-// needsRegistration reports whether a raw line from the API is refused
-// until the connection is set up: a PRIVMSG or NOTICE, which we can't yet
-// tell whether to echo, or a NICK. Other lines (typing notifications,
-// JOIN, raw commands) are sent if connected and dropped otherwise, as
-// before.
-func needsRegistration(line string) bool {
-	cmd := command(line)
-	return cmd == "PRIVMSG" || cmd == "NOTICE" || cmd == "NICK"
 }
 
 // shouldEcho reports whether a raw line from the API is echoed back as our

@@ -11,11 +11,13 @@ import (
 	"github.com/ergochat/irc-go/ircmsg"
 )
 
-// effects is what handling one message publishes besides the line itself
-// (which the raw callback publishes), sent after c is unlocked.
+// effects is what handling one message does once c is unlocked: what it
+// publishes besides the line itself (which the raw callback publishes),
+// and the nick irc-go should prefer (see keepNick), if that changes.
 type effects struct {
-	multi   *IRCClientMultiMessage // QUIT and NICK
-	changes []*IRCConfigChange
+	multi      *IRCClientMultiMessage // QUIT and NICK
+	changes    []*IRCConfigChange
+	preferNick string
 }
 
 // A handler updates c's state for one message from the server, with c
@@ -60,15 +62,16 @@ func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientM
 // return (finishSetup).
 func (c *IRCClient) onWelcome(m ircmsg.Message, e *effects) {
 	c.Retries = 0
-	c.keepCurrentNick()
+	c.keepNick(e)
 }
 
 // onNickRefused handles 432, 433 and 437, a nick refused. During
 // registration (before 001) it picks the next nick to try (see
 // registrationNickRefused); irc-go's own handler for these is removed (see
 // addHandlers). Afterwards, a refusal of the nick the user asked for ends
-// the request; nothing else needs undoing, since the request was sent as a
-// plain NICK and irc-go never asked for it.
+// the request, and irc-go goes back to preferring the nick we have (it
+// prefers a pending request's; see keepNick). The request was sent as a
+// plain NICK, so irc-go never asked for it and won't retry it.
 func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
 	if len(m.Params) < 2 || c.conn == nil {
 		return
@@ -77,37 +80,94 @@ func (c *IRCClient) onNickRefused(m ircmsg.Message, e *effects) {
 		c.registrationNickRefused(m)
 		return
 	}
-	if c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
+	// a short reply ("433 * :reason") doesn't say which nick; it can't
+	// be the request's
+	if len(m.Params) >= 3 && c.requestedNick != "" && strings.EqualFold(m.Params[1], c.requestedNick) {
 		c.requestedNick = ""
+		// back to preferring the nick we have
+		c.keepNick(e)
 	}
 }
+
+// maxNickTries is how many refused nicks one registration attempt takes
+// before it's given up; liercd reconnects after it as usual.
+const maxNickTries = 10
 
 // registrationNickRefused picks the next nick to register with after the
 // server refused one, or stops the connection when there's none left:
 //
-//   - in use (433, 437): the nick with "_" appended, so me, me_, me__
+//   - in use (433, 437): the nick with "_" appended, so me, me_, me__.
+//     A server that cuts what we sent to its nick length refuses the cut
+//     nick instead (verylongni for verylongni_); then the last character
+//     before the "_"s becomes one, keeping the length (verylongn_).
 //   - not allowed (432), the configured nick: stop, since trying it again
 //     can't work; the user changes it in the connection's settings
 //   - not allowed (432), one of our fallbacks (most likely too long): drop
 //     a character from what it was built on, so verylongnick_ becomes
 //     verylongnic_, and stop once there's nothing left to drop
 //
-// c is locked.
+// After maxNickTries the attempt is given up, and liercd reconnects
+// later. c is locked.
 func (c *IRCClient) registrationNickRefused(m ircmsg.Message) {
-	refused := m.Params[1]
+	// a short reply ("433 * :reason") doesn't say which nick; it's the
+	// one we sent last
+	refused := c.regNick
+	if len(m.Params) >= 3 {
+		refused = m.Params[1]
+	}
 	reason := m.Params[len(m.Params)-1]
-	switch {
-	case m.Command != "432":
-		c.Send("NICK " + refused + "_")
-	case strings.EqualFold(refused, c.Config.Nick):
+	if m.Command == "432" && strings.EqualFold(refused, c.Config.Nick) {
 		c.stop(fmt.Sprintf("Nickname %q isn't allowed by the server: %s", refused, reason))
-	default:
+		return
+	}
+
+	c.regTries++
+	if c.regTries > maxNickTries {
+		c.giveUp("Couldn't find a free nickname: " + reason)
+		return
+	}
+
+	var next string
+	switch {
+	case m.Command == "432":
 		base := []rune(strings.TrimRight(refused, "_"))
 		if len(base) <= 1 {
 			c.stop("Couldn't find a nickname the server allows: " + reason)
 			return
 		}
-		c.Send("NICK " + string(base[:len(base)-1]) + "_")
+		next = string(base[:len(base)-1]) + "_"
+	case len([]rune(refused)) < len([]rune(c.regNick)):
+		next = underscoreLast(refused)
+		if next == "" {
+			c.giveUp("Couldn't find a free nickname: " + reason)
+			return
+		}
+	default:
+		next = refused + "_"
+	}
+	c.regNick = next
+	c.Send("NICK " + next)
+}
+
+// underscoreLast is nick with its last character before any trailing "_"s
+// made a "_" too, so it keeps its length: nick_ becomes nic__. It's ""
+// when only one such character is left.
+func underscoreLast(nick string) string {
+	r := []rune(nick)
+	base := len([]rune(strings.TrimRight(nick, "_")))
+	if base <= 1 {
+		return ""
+	}
+	r[base-1] = '_'
+	return string(r)
+}
+
+// giveUp ends the current attempt, with reason as its status; unlike
+// stop, liercd reconnects after it as usual. c is locked.
+func (c *IRCClient) giveUp(reason string) {
+	c.gaveUp = reason
+	if c.socket != nil {
+		c.socket.Close()
 	}
 }
 
@@ -345,7 +405,7 @@ func (c *IRCClient) onNick(m ircmsg.Message, e *effects) {
 			c.configChanged(e, "Nick")
 		}
 		// either way it's our nick now, and irc-go shouldn't change it
-		c.keepCurrentNick()
+		c.keepNick(e)
 	}
 	for _, channel := range c.Channels {
 		if _, ok := channel.Nicks[nick]; ok {

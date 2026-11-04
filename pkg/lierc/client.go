@@ -75,6 +75,12 @@ type IRCClient struct {
 	socket      net.Conn
 	attemptDone chan struct{}
 	cancelDial  context.CancelFunc
+	// registering: the nick last sent and how many the server has
+	// refused (see registrationNickRefused), and why the attempt was
+	// given up, if it was; liercd still reconnects after it
+	regNick  string
+	regTries int
+	gaveUp   string
 	// a copy of conn.AcknowledgedCaps() taken when Connect returns
 	// (finishSetup), kept between attempts. The API's messages are refused
 	// until then, so it's always known whether the server echoes them.
@@ -307,16 +313,27 @@ func (c *IRCClient) RequestNick(nick string) {
 	c.requestedNick = nick
 }
 
-// keepCurrentNick makes irc-go prefer the nick we have now, so it never
-// changes our nick itself: on each keepalive tick it asks for its
-// preferred nick when that differs from the current one. SetNick also
-// sends NICK <current>, which the server ignores. c is locked.
-func (c *IRCClient) keepCurrentNick() {
+// keepNick makes irc-go prefer the nick we want, so it never changes our
+// nick itself: on each keepalive it asks the server for its preferred
+// nick when that differs from the current one. We want the nick the user
+// asked for while that request is pending, and otherwise the one we
+// have, so a NICK the server confirms late (the user's earlier request)
+// can't send us back to it.
+//
+// irc-go's preferred nick can only be set with SetNick, which also sends
+// NICK <preferred> (harmless: it's the nick we have or the one asked for)
+// and can block on irc-go's write queue. So it's only recorded in e, and
+// set once c is unlocked (see addHandlers). c is locked.
+func (c *IRCClient) keepNick(e *effects) {
 	if c.conn == nil {
 		return
 	}
-	if nick := c.conn.CurrentNick(); nick != "" && nick != c.conn.PreferredNick() {
-		c.conn.SetNick(nick)
+	want := c.requestedNick
+	if want == "" {
+		want = c.conn.CurrentNick()
+	}
+	if want != "" && want != c.conn.PreferredNick() {
+		e.preferNick = want
 	}
 }
 

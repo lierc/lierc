@@ -14,8 +14,8 @@ func TestDestroyWhenServerIgnoresQuit(t *testing.T) {
 	retryUnit = 20 * time.Millisecond
 	t.Cleanup(func() { retryUnit = old })
 	srv := newFakeServer(t)
-	drain(t)
-	c := newTestClient(t, srv.config("me"))
+	d := drain(t)
+	c := newTestClient(t, d, srv.config("me"))
 	fc := srv.accept(t)
 	fc.register(t, "me")
 	waitRegistered(t, c)

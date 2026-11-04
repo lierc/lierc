@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lierc/lierc/pkg/lierc"
 	"github.com/lierc/lierc/pkg/liercd"
 	"github.com/nsqio/go-nsq"
 	"log"
@@ -42,8 +41,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	m := liercd.NewClientManager()
-
 	nsqd := fmt.Sprintf("%s:4150", os.Getenv("NSQD_HOST"))
 	w, err := nsq.NewProducer(nsqd, nsq.NewConfig())
 	if err != nil {
@@ -53,6 +50,7 @@ func main() {
 	// go-nsq reconnects on the next publish after nsqd goes away, so
 	// retrying failed publishes is all the reconnect logic needed
 	p := liercd.NewPublisher(w, liercd.QueueSize)
+	m := liercd.NewClientManager(p)
 
 	// Run stops only once the IRC connections are closed, so that their
 	// DISCONNECT events are queued before the final flush
@@ -61,25 +59,6 @@ func main() {
 	go func() {
 		p.Run(running)
 		close(ran)
-	}()
-
-	// Keeps going through shutdown: closing a client blocks until its
-	// status is received here
-	go func() {
-		for {
-			select {
-			case event := <-lierc.Events:
-				p.Enqueue("chats", event)
-			case multi := <-lierc.Multi:
-				p.Enqueue("multi", multi)
-			case status := <-lierc.Status:
-				if event := m.ConnectEvent(status); event != nil {
-					p.Enqueue("chats", event)
-				}
-			case change := <-lierc.ConfigChanges:
-				p.Enqueue("config", change)
-			}
-		}
 	}()
 
 	http.HandleFunc("/", m.HandleCommand)

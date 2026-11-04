@@ -288,7 +288,7 @@ func (c *IRCClient) sendStatus(status *IRCClientStatus) {
 	if c.debug > 0 {
 		c.log.Print(status.Message)
 	}
-	Status <- status
+	c.sink.Status(status)
 }
 
 // Destroy quits the connection, or stops waiting to reconnect, and

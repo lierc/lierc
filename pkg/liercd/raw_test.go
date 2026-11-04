@@ -3,6 +3,7 @@ package liercd
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -73,7 +74,7 @@ func TestShouldEcho(t *testing.T) {
 // Before the connection is set up, the raw action refuses every line with
 // 409 and says why, instead of sending, dropping or echoing it.
 func TestRawRefusedUntilRegistered(t *testing.T) {
-	m := NewClientManager()
+	m := NewClientManager(discard{})
 	c := &lierc.IRCClient{Id: "c1", Config: &lierc.IRCConfig{Nick: "me"}}
 	m.AddClient(c)
 
@@ -130,7 +131,7 @@ func TestRawLine(t *testing.T) {
 // connection's state: it would go out as more than one line, and the
 // lines after the first would skip the checks.
 func TestRawLineBreakRefused(t *testing.T) {
-	m := NewClientManager()
+	m := NewClientManager(discard{})
 	c := &lierc.IRCClient{Id: "c1", Config: &lierc.IRCConfig{Nick: "me"}}
 	m.AddClient(c)
 
@@ -145,5 +146,30 @@ func TestRawLineBreakRefused(t *testing.T) {
 	m.HandleCommand(w, httptest.NewRequest("POST", "/c1/raw", strings.NewReader("JOIN #a\r\n")))
 	if w.Code != http.StatusConflict {
 		t.Errorf("trailing line ending: status %d, want 409", w.Code)
+	}
+}
+
+// discard is a Queue that drops everything.
+type discard struct{}
+
+func (discard) Enqueue(string, interface{}) {}
+
+// recorded is a Queue that keeps the topics it was given, in order.
+type recorded struct{ topics []string }
+
+func (r *recorded) Enqueue(topic string, _ interface{}) { r.topics = append(r.topics, topic) }
+
+// The manager, as its clients' Sink, queues each kind on its topic; a
+// status goes on chats as a CONNECT or DISCONNECT.
+func TestManagerSinkTopics(t *testing.T) {
+	q := &recorded{}
+	m := NewClientManager(q)
+	m.Message(&lierc.IRCClientMessage{Id: "c1"})
+	m.Multi(&lierc.IRCClientMultiMessage{Id: "c1"})
+	m.Status(&lierc.IRCClientStatus{Id: "c1", Host: "h", Connected: true, Message: "Connected"})
+	m.ConfigChange(&lierc.IRCConfigChange{Id: "c1"})
+	want := []string{"chats", "multi", "chats", "config"}
+	if !reflect.DeepEqual(q.topics, want) {
+		t.Errorf("topics %q, want %q", q.topics, want)
 	}
 }

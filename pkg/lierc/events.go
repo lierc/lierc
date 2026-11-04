@@ -422,7 +422,7 @@ func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 	c.Lock()
 	c.annotate(msg)
 	c.Unlock()
-	Events <- &IRCClientMessage{Id: c.Id, Message: msg}
+	c.sink.Message(&IRCClientMessage{Id: c.Id, Message: msg})
 }
 
 // run runs h for m with c locked, and returns what h wants published;
@@ -456,13 +456,13 @@ func (c *IRCClient) annotate(m *IRCMessage) {
 	}
 }
 
-// publishEffects sends the multi message and config changes e holds. c
-// must be unlocked: the channels may block.
+// publishEffects publishes the multi message and config changes e holds.
+// c must be unlocked (see Sink).
 func (c *IRCClient) publishEffects(e effects) {
 	if e.multi != nil {
-		Multi <- e.multi
+		c.sink.Multi(e.multi)
 	}
 	for _, change := range e.changes {
-		ConfigChanges <- change
+		c.sink.ConfigChange(change)
 	}
 }

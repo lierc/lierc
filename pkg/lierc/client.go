@@ -18,16 +18,23 @@ import (
 
 var hostname, _ = os.Hostname()
 
-var Multi = make(chan *IRCClientMultiMessage)
-
-var Events = make(chan *IRCClientMessage)
-
-var Status = make(chan *IRCClientStatus)
-
-// ConfigChanges gets the fields of a connection's config that liercd
-// changed itself (its channels as it joins and parts, a nick it was asked
-// to change to), for the logger to save.
-var ConfigChanges = make(chan *IRCConfigChange)
+// A Sink gets what a client publishes. It must be safe for concurrent
+// use: a client calls it from several goroutines (statuses in order, under
+// statusMu), never with the client locked. It shouldn't block for long,
+// since the client waits.
+type Sink interface {
+	// Message is a line from the server, or one we sent that it won't
+	// echo.
+	Message(*IRCClientMessage)
+	// Multi is a NICK or QUIT, with the channels it affected.
+	Multi(*IRCClientMultiMessage)
+	// Status is the connection's state whenever it changes.
+	Status(*IRCClientStatus)
+	// ConfigChange is the fields of a connection's config that liercd
+	// changed itself (its channels as it joins and parts, a nick it was
+	// asked to change to), for the logger to save.
+	ConfigChange(*IRCConfigChange)
+}
 
 // IRCConfigChange is the changed fields of one connection's config.
 type IRCConfigChange struct {
@@ -42,6 +49,7 @@ const (
 
 type IRCClient struct {
 	sync.RWMutex
+	sink Sink
 	// statusMu orders status publishing: held (before c's lock, never
 	// inside it) from deciding a status until it's sent, so a "Reconnecting
 	// in" can't follow Destroy's "Closing connection"
@@ -119,8 +127,10 @@ func LogLevel(env string) int64 {
 	}
 }
 
-func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
+// NewIRCClient starts a client for config, publishing to sink.
+func NewIRCClient(config *IRCConfig, Id string, sink Sink) *IRCClient {
 	c := &IRCClient{
+		sink:          sink,
 		Config:        config,
 		Channels:      make(map[string]*IRCChannel),
 		StatusMessage: "Connecting",
@@ -131,7 +141,7 @@ func NewIRCClient(config *IRCConfig, Id string) *IRCClient {
 		log:           log.New(ircLogOutput, Id+" ", log.LstdFlags),
 	}
 
-	Status <- c.Status()
+	sink.Status(c.Status())
 	go c.connect()
 
 	return c

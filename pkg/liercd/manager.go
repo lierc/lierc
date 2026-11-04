@@ -17,16 +17,41 @@ import (
 	"github.com/lierc/lierc/pkg/lierc"
 )
 
-var Privmsg = make(chan *ClientPrivmsg)
-
-type ClientPrivmsg struct {
-	Id   string
-	Line string
+// A Queue takes events to publish on an NSQ topic; Publisher is one.
+// Enqueue mustn't block.
+type Queue interface {
+	Enqueue(topic string, v interface{})
 }
 
+// ClientManager runs the clients and is their lierc.Sink: what they
+// publish goes on queue.
 type ClientManager struct {
 	Clients map[string]*lierc.IRCClient
 	sync.RWMutex
+	queue Queue
+}
+
+// Message queues a client's line on the chats topic.
+func (m *ClientManager) Message(e *lierc.IRCClientMessage) {
+	m.queue.Enqueue("chats", e)
+}
+
+// Multi queues a client's NICK or QUIT on the multi topic.
+func (m *ClientManager) Multi(e *lierc.IRCClientMultiMessage) {
+	m.queue.Enqueue("multi", e)
+}
+
+// Status queues a client's status as a CONNECT or DISCONNECT on the chats
+// topic.
+func (m *ClientManager) Status(s *lierc.IRCClientStatus) {
+	if event := m.ConnectEvent(s); event != nil {
+		m.queue.Enqueue("chats", event)
+	}
+}
+
+// ConfigChange queues a config change on the config topic, for the logger.
+func (m *ClientManager) ConfigChange(c *lierc.IRCConfigChange) {
+	m.queue.Enqueue("config", c)
 }
 
 func (m *ClientManager) Shutdown() {
@@ -50,9 +75,11 @@ func (m *ClientManager) Shutdown() {
 	fmt.Fprintf(os.Stderr, "Exited cleanly")
 }
 
-func NewClientManager() *ClientManager {
+// NewClientManager is a manager whose clients publish to queue.
+func NewClientManager(queue Queue) *ClientManager {
 	m := &ClientManager{
 		Clients: make(map[string]*lierc.IRCClient),
+		queue:   queue,
 	}
 
 	return m
@@ -202,13 +229,13 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		c := lierc.NewIRCClient(&config, id)
+		c := lierc.NewIRCClient(&config, id, m)
 
 		log.Printf("[Manager] adding c %s", c.Id)
 		m.AddClient(c)
 
 		if event := m.CreateEvent(c); event != nil {
-			lierc.Events <- event
+			m.Message(event)
 		}
 
 		io.WriteString(w, "ok")
@@ -223,7 +250,7 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("Destroying c")
 		if event := m.DeleteEvent(c); event != nil {
-			lierc.Events <- event
+			m.Message(event)
 		}
 		c.Destroy()
 		m.RemoveClient(c)
@@ -272,7 +299,7 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		if shouldEcho(line, queued, echoAcked) {
 			if event := m.PrivmsgEvent(c, line); event != nil {
 				event.Message.Prefix.Self = true
-				lierc.Events <- event
+				m.Message(event)
 			}
 		}
 

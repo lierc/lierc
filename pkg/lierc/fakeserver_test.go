@@ -196,7 +196,7 @@ func (fc *fakeConn) close() {
 	fc.Conn.Close()
 }
 
-// drained is what a test's client published on the global channels.
+// drained is what a test's client published (see drain).
 type drained struct {
 	mu       sync.Mutex
 	statuses []*IRCClientStatus
@@ -206,43 +206,33 @@ type drained struct {
 	cursor   int // statuses already matched by next
 }
 
-// drain collects Status, Events, Multi and ConfigChanges for the test's
-// duration. Call it before creating the client, so the client is destroyed
-// (a later cleanup) while the channels are still drained.
+// drain is a Sink that collects what a test's client publishes.
 func drain(t *testing.T) *drained {
-	d := &drained{}
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case s := <-Status:
-				d.mu.Lock()
-				d.statuses = append(d.statuses, s)
-				d.mu.Unlock()
-			case e := <-Events:
-				d.mu.Lock()
-				d.events = append(d.events, e)
-				d.mu.Unlock()
-			case m := <-Multi:
-				d.mu.Lock()
-				d.multi = append(d.multi, m)
-				d.mu.Unlock()
-			case c := <-ConfigChanges:
-				d.mu.Lock()
-				d.changes = append(d.changes, c)
-				d.mu.Unlock()
-			case <-stop:
-				return
-			}
-		}
-	}()
-	t.Cleanup(func() {
-		close(stop)
-		<-done
-	})
-	return d
+	return &drained{}
+}
+
+func (d *drained) Status(s *IRCClientStatus) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.statuses = append(d.statuses, s)
+}
+
+func (d *drained) Message(e *IRCClientMessage) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.events = append(d.events, e)
+}
+
+func (d *drained) Multi(m *IRCClientMultiMessage) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.multi = append(d.multi, m)
+}
+
+func (d *drained) ConfigChange(c *IRCConfigChange) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.changes = append(d.changes, c)
 }
 
 // next waits for the next status after the last one matched that satisfies
@@ -283,10 +273,11 @@ func (d *drained) messages() []string {
 	return out
 }
 
-// newTestClient starts a client and destroys it when the test ends.
-func newTestClient(t *testing.T, config *IRCConfig) *IRCClient {
+// newTestClient starts a client publishing to d and destroys it when the
+// test ends.
+func newTestClient(t *testing.T, d *drained, config *IRCConfig) *IRCClient {
 	t.Helper()
-	c := NewIRCClient(config, "c1")
+	c := NewIRCClient(config, "c1", d)
 	t.Cleanup(c.Destroy)
 	return c
 }

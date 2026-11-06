@@ -127,7 +127,8 @@ func LogLevel(env string) int64 {
 	}
 }
 
-// NewIRCClient starts a client for config, publishing to sink.
+// NewIRCClient makes a client for config, publishing to sink. It doesn't
+// connect until Start.
 func NewIRCClient(config *IRCConfig, Id string, sink Sink) *IRCClient {
 	c := &IRCClient{
 		sink:          sink,
@@ -142,9 +143,16 @@ func NewIRCClient(config *IRCConfig, Id string, sink Sink) *IRCClient {
 	}
 
 	sink.Status(c.Status())
-	go c.connect()
 
 	return c
+}
+
+// Start begins connecting, in the background. Call it once the client
+// can be found (liercd lists it first): the server may look the
+// connection up, through identd, as soon as it accepts it. A client
+// destroyed before Start never connects.
+func (c *IRCClient) Start() {
+	go c.connect()
 }
 
 // currentNick is our nick on the server, as irc-go has it (set at 001,

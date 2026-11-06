@@ -501,7 +501,7 @@ func TestDestroyOrderedAfterConnected(t *testing.T) {
 		})
 	}
 	t.Cleanup(func() { testHookConnected = nil })
-	// NewIRCClient connects in the background, so the hook can't run
+	// the client connects in the background, so the hook can't run
 	// before the client is handed over
 	client <- newTestClient(t, d, srv.config("me"))
 	srv.accept(t)
@@ -1239,4 +1239,27 @@ func TestBackoffResetOnlyAfterStableConnection(t *testing.T) {
 		cycle(t, srv, d, "Reconnecting in 20ms")
 		cycle(t, srv, d, "Reconnecting in 20ms")
 	})
+}
+
+// A new client doesn't connect until Start, so whoever creates it can
+// list it first: liercd adds it to its portmap, and identd's lookup of
+// the connection (made as soon as the server accepts it) finds it.
+func TestConnectsOnStart(t *testing.T) {
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := NewIRCClient(srv.config("me"), "c1", d)
+	t.Cleanup(c.Destroy)
+	srv.noAccept(t, 200*time.Millisecond)
+	c.Start()
+	srv.accept(t)
+}
+
+// Destroyed before Start, a client never connects.
+func TestDestroyBeforeStart(t *testing.T) {
+	srv := newFakeServer(t)
+	d := drain(t)
+	c := NewIRCClient(srv.config("me"), "c1", d)
+	c.Destroy()
+	c.Start()
+	srv.noAccept(t, 200*time.Millisecond)
 }

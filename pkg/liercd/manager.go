@@ -232,7 +232,11 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		c := lierc.NewIRCClient(&config, id, m)
 
 		log.Printf("[Manager] adding c %s", c.Id)
+		// listed before it connects: the server asks identd about the
+		// connection as soon as it accepts it, and identd reads the
+		// portmap; one not listed yet is answered NO-USER
 		m.AddClient(c)
+		c.Start()
 
 		if event := m.CreateEvent(c); event != nil {
 			m.Message(event)

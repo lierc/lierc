@@ -279,6 +279,7 @@ func newTestClient(t *testing.T, d *drained, config *IRCConfig) *IRCClient {
 	t.Helper()
 	c := NewIRCClient(config, "c1", d)
 	t.Cleanup(c.Destroy)
+	c.Start()
 	return c
 }
 

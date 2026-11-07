@@ -65,7 +65,10 @@ func TestCreateListedBeforeConnecting(t *testing.T) {
 		m.HandleCommand(w, httptest.NewRequest("GET", "/portmap", nil))
 		var ports [][]string
 		json.Unmarshal(w.Body.Bytes(), &ports)
-		if len(ports) == 1 && ports[0][0] == "me" && ports[0][2] == strconv.Itoa(port) {
+		// user, local port, remote port, then the server's ip, which
+		// older identds don't read
+		if len(ports) == 1 && len(ports[0]) == 4 && ports[0][0] == "me" &&
+			ports[0][2] == strconv.Itoa(port) && ports[0][3] == "127.0.0.1" {
 			break
 		}
 		if time.Now().After(deadline) {

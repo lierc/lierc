@@ -367,9 +367,10 @@ func (c *IRCClient) Send(line string) bool {
 }
 
 // PortMap is the connection's entry in liercd's /portmap, for identd: the
-// ident user (the configured username, or the nick without one) and the
-// socket's local and remote ports. ok is false while it isn't connected.
-func (c *IRCClient) PortMap() (user, local, remote string, ok bool) {
+// ident user (the configured username, or the nick without one), the
+// socket's local and remote ports, and the server's ip, which identd
+// checks a query comes from. ok is false while it isn't connected.
+func (c *IRCClient) PortMap() (user, local, remote, remoteIP string, ok bool) {
 	c.RLock()
 	sock := c.socket
 	user = c.Config.User
@@ -378,11 +379,11 @@ func (c *IRCClient) PortMap() (user, local, remote string, ok bool) {
 	}
 	c.RUnlock()
 	if sock == nil {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	_, local, _ = net.SplitHostPort(sock.LocalAddr().String())
-	_, remote, _ = net.SplitHostPort(sock.RemoteAddr().String())
-	return user, local, remote, true
+	remoteIP, remote, _ = net.SplitHostPort(sock.RemoteAddr().String())
+	return user, local, remote, remoteIP, true
 }
 
 // trackedConn records the first read or write error on the socket, for

@@ -691,7 +691,7 @@ func TestPortMap(t *testing.T) {
 	fc.register(t, "me")
 	waitRegistered(t, c)
 
-	user, local, remote, ok := c.PortMap()
+	user, local, remote, remoteIP, ok := c.PortMap()
 	if !ok {
 		t.Fatal("not connected")
 	}
@@ -704,6 +704,9 @@ func TestPortMap(t *testing.T) {
 	}
 	if want := strconv.Itoa(srv.port); remote != want {
 		t.Errorf("remote port %s, want %s", remote, want)
+	}
+	if remoteIP != "127.0.0.1" {
+		t.Errorf("remote ip %q, want 127.0.0.1", remoteIP)
 	}
 }
 

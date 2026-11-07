@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -59,37 +63,107 @@ func deadURL(t *testing.T) string {
 	return url
 }
 
+var asker = netip.MustParseAddr("192.0.2.1")
+
 func TestLookup(t *testing.T) {
 	mainURL := serve(t, `[["alice","40000","6667"]]`, http.StatusOK)
 	next := serve(t, `[["bob","40001","6697"]]`, http.StatusOK)
 	urls := []string{mainURL, next}
 
-	if u, err := lookup(urls, "40000", "6667"); err != nil || u != "alice" {
+	if u, err := lookup(urls, asker, "40000", "6667"); err != nil || u != "alice" {
 		t.Errorf("main: %q, %v", u, err)
 	}
-	if u, err := lookup(urls, "40001", "6697"); err != nil || u != "bob" {
+	if u, err := lookup(urls, asker, "40001", "6697"); err != nil || u != "bob" {
 		t.Errorf("next: %q, %v", u, err)
 	}
-	if _, err := lookup(urls, "40002", "6667"); !errors.Is(err, errNoUser) {
+	if _, err := lookup(urls, asker, "40002", "6667"); !errors.Is(err, errNoUser) {
 		t.Errorf("unknown connection: %v, want errNoUser", err)
 	}
 	// Ports must match as a pair.
-	if _, err := lookup(urls, "40000", "6697"); !errors.Is(err, errNoUser) {
+	if _, err := lookup(urls, asker, "40000", "6697"); !errors.Is(err, errNoUser) {
 		t.Errorf("mismatched pair: %v, want errNoUser", err)
+	}
+}
+
+// An entry with the server's ip is only given to that server.
+func TestLookupChecksAsker(t *testing.T) {
+	url := serve(t, `[["alice","40000","6697","192.0.2.1"],["bob","40001","6697","2001:db8::1"]]`, http.StatusOK)
+	urls := []string{url}
+
+	if u, err := lookup(urls, asker, "40000", "6697"); err != nil || u != "alice" {
+		t.Errorf("its server: %q, %v", u, err)
+	}
+	if _, err := lookup(urls, netip.MustParseAddr("198.51.100.7"), "40000", "6697"); !errors.Is(err, errNoUser) {
+		t.Errorf("another host: %v, want errNoUser", err)
+	}
+	// an IPv4 peer on a dual-stack socket
+	if u, err := lookup(urls, netip.MustParseAddr("::ffff:192.0.2.1"), "40000", "6697"); err != nil || u != "alice" {
+		t.Errorf("mapped v4: %q, %v", u, err)
+	}
+	if u, err := lookup(urls, netip.MustParseAddr("2001:db8::1"), "40001", "6697"); err != nil || u != "bob" {
+		t.Errorf("v6: %q, %v", u, err)
+	}
+	// unknown asker (not a TCP peer)
+	if _, err := lookup(urls, netip.Addr{}, "40000", "6697"); !errors.Is(err, errNoUser) {
+		t.Errorf("no asker: %v, want errNoUser", err)
+	}
+}
+
+// The same local port can be in use to two servers; each gets its own.
+func TestLookupSamePortsTwoServers(t *testing.T) {
+	url := serve(t, `[["alice","40000","6697","198.51.100.7"],["bob","40000","6697","192.0.2.1"]]`, http.StatusOK)
+	if u, err := lookup([]string{url}, asker, "40000", "6697"); err != nil || u != "bob" {
+		t.Errorf("%q, %v, want bob", u, err)
+	}
+}
+
+// An older liercd's entries have no ip: they match on ports alone.
+func TestLookupOldLiercd(t *testing.T) {
+	old := serve(t, `[["alice","40000","6667"]]`, http.StatusOK)
+	if u, err := lookup([]string{old}, netip.MustParseAddr("198.51.100.7"), "40000", "6667"); err != nil || u != "alice" {
+		t.Errorf("%q, %v", u, err)
+	}
+}
+
+// An ip that doesn't parse matches nobody.
+func TestLookupBadIP(t *testing.T) {
+	url := serve(t, `[["alice","40000","6667","nonsense"],["bob","40001","6667",""]]`, http.StatusOK)
+	for _, local := range []string{"40000", "40001"} {
+		if _, err := lookup([]string{url}, asker, local, "6667"); !errors.Is(err, errNoUser) {
+			t.Errorf("%s: %v, want errNoUser", local, err)
+		}
 	}
 }
 
 func TestLookupWithAnInstanceDown(t *testing.T) {
 	next := serve(t, `[["bob","40001","6697"]]`, http.StatusOK)
-	urls := []string{deadURL(t), next}
+	broken := serve(t, `[]`, http.StatusInternalServerError)
 
 	// Found on the instance that answered.
-	if u, err := lookup(urls, "40001", "6697"); err != nil || u != "bob" {
+	if u, err := lookup([]string{broken, next}, asker, "40001", "6697"); err != nil || u != "bob" {
 		t.Errorf("found on next: %q, %v", u, err)
 	}
-	// Not found anywhere readable: it may be main's, so not NO-USER.
-	if _, err := lookup(urls, "40000", "6667"); err == nil || errors.Is(err, errNoUser) {
-		t.Errorf("missing with main down: %v, want a non-NO-USER error", err)
+	// Not found, and one instance answered badly: it may be that
+	// one's, so not NO-USER.
+	if _, err := lookup([]string{broken, next}, asker, "40000", "6667"); err == nil || errors.Is(err, errNoUser) {
+		t.Errorf("missing with main broken: %v, want a non-NO-USER error", err)
+	}
+}
+
+// Nothing listening means that liercd isn't running, so it has no
+// connections: a miss is NO-USER.
+func TestLookupWithAnInstanceStopped(t *testing.T) {
+	next := serve(t, `[["bob","40001","6697"]]`, http.StatusOK)
+	urls := []string{deadURL(t), next}
+
+	if u, err := lookup(urls, asker, "40001", "6697"); err != nil || u != "bob" {
+		t.Errorf("found on next: %q, %v", u, err)
+	}
+	if _, err := lookup(urls, asker, "40000", "6667"); !errors.Is(err, errNoUser) {
+		t.Errorf("missing with main stopped: %v, want errNoUser", err)
+	}
+	if _, err := lookup([]string{deadURL(t)}, asker, "40000", "6667"); !errors.Is(err, errNoUser) {
+		t.Errorf("only instance stopped: %v, want errNoUser", err)
 	}
 }
 
@@ -98,7 +172,7 @@ func TestLookupBadResponses(t *testing.T) {
 		"status": serve(t, `[]`, http.StatusInternalServerError),
 		"json":   serve(t, `not json`, http.StatusOK),
 	} {
-		if _, err := lookup([]string{url}, "1", "2"); err == nil || errors.Is(err, errNoUser) {
+		if _, err := lookup([]string{url}, asker, "1", "2"); err == nil || errors.Is(err, errNoUser) {
 			t.Errorf("%s: %v, want a non-NO-USER error", name, err)
 		}
 	}
@@ -186,10 +260,10 @@ func TestReplyCleansUser(t *testing.T) {
 	}
 }
 
-func alice(local, remote string) (string, error) { return "alice", nil }
+func alice(asker netip.Addr, local, remote string) (string, error) { return "alice", nil }
 
 // session runs handle on one end of a pipe and returns the other.
-func session(t *testing.T, find func(local, remote string) (string, error)) (net.Conn, chan struct{}) {
+func session(t *testing.T, find lookupFunc) (net.Conn, chan struct{}) {
 	t.Helper()
 	client, server := net.Pipe()
 	done := make(chan struct{})
@@ -310,5 +384,120 @@ func TestServeConnectionLimit(t *testing.T) {
 	io.WriteString(third, "1, 2\n")
 	if _, err := bufio.NewReader(third).ReadString('\n'); err != nil {
 		t.Errorf("third connection: %v", err)
+	}
+}
+
+// The lookup is given the address the query came from.
+func TestServePassesAsker(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan netip.Addr, 1)
+	go serveIdent(ln, func(a netip.Addr, local, remote string) (string, error) {
+		got <- a
+		return "alice", nil
+	}, 10)
+
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	io.WriteString(c, "1, 2\n")
+	select {
+	case a := <-got:
+		if a != netip.MustParseAddr("127.0.0.1") {
+			t.Errorf("asker %v, want 127.0.0.1", a)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no lookup")
+	}
+}
+
+type logBuf struct {
+	sync.Mutex
+	b strings.Builder
+}
+
+func (l *logBuf) Write(p []byte) (int, error) {
+	l.Lock()
+	defer l.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuf) String() string {
+	l.Lock()
+	defer l.Unlock()
+	return l.b.String()
+}
+
+func captureLog(t *testing.T) *logBuf {
+	t.Helper()
+	buf := &logBuf{}
+	log.SetOutput(buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	return buf
+}
+
+// An instance that can't be read is logged when it goes down and when
+// it's back, not on every lookup.
+func TestLookupLogsInstanceStateChanges(t *testing.T) {
+	logs := captureLog(t)
+	var down atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	urls := []string{srv.URL + "/portmap"}
+
+	lookup(urls, asker, "1", "2")
+	if s := logs.String(); s != "" {
+		t.Errorf("logged while up: %q", s)
+	}
+	down.Store(true)
+	for range 3 {
+		lookup(urls, asker, "1", "2")
+	}
+	if n := strings.Count(logs.String(), "unreachable"); n != 1 {
+		t.Errorf("%d unreachable lines, want 1: %q", n, logs.String())
+	}
+	down.Store(false)
+	for range 3 {
+		lookup(urls, asker, "1", "2")
+	}
+	if n := strings.Count(logs.String(), "is back"); n != 1 {
+		t.Errorf("%d back lines, want 1: %q", n, logs.String())
+	}
+}
+
+// Each query is one line: who asked and the reply, or the query
+// itself when it was invalid.
+func TestHandleLogsQueries(t *testing.T) {
+	logs := captureLog(t)
+	c, done := session(t, alice)
+	r := bufio.NewReader(c)
+	for _, q := range []string{"1, 2\n", "nonsense\n"} {
+		io.WriteString(c, q)
+		r.ReadString('\n')
+	}
+	c.Close()
+	waitDone(t, done)
+	got := logs.String()
+	for _, want := range []string{
+		"1, 2 : USERID : UNIX : alice\n",
+		`"nonsense" : ERROR : INVALID-PORT` + "\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "\n") != 2 {
+		t.Errorf("want 2 lines:\n%s", got)
 	}
 }

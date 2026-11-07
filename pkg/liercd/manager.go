@@ -191,9 +191,12 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 
 		portmap := make([][]string, 0)
 
+		// user, local port, remote port, server ip. identd reads the
+		// first three, and the ip when it's there, so new fields go on
+		// the end
 		for _, c := range m.Clients {
-			if user, local, remote, ok := c.PortMap(); ok {
-				portmap = append(portmap, []string{user, local, remote})
+			if user, local, remote, remoteIP, ok := c.PortMap(); ok {
+				portmap = append(portmap, []string{user, local, remote, remoteIP})
 			}
 		}
 

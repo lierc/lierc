@@ -9,9 +9,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 	"unicode"
 )
@@ -32,24 +35,29 @@ const (
 )
 
 func main() {
+	log.SetFlags(0) // journald adds the time
 	urls := portmapURLs(os.Getenv("LIERCD_HOST"), os.Getenv("LIERCD_NEXT_HOST"))
 
 	ln, err := net.Listen("tcp", ":113")
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
 
 	log.Printf("listening on port 113, portmaps %s", strings.Join(urls, " "))
 
-	log.Fatal(serveIdent(ln, func(local, remote string) (string, error) {
-		return lookup(urls, local, remote)
+	log.Fatal(serveIdent(ln, func(asker netip.Addr, local, remote string) (string, error) {
+		return lookup(urls, asker, local, remote)
 	}, maxConns))
 }
+
+// lookupFunc finds the user of the connection from local to remote,
+// for a query from asker.
+type lookupFunc func(asker netip.Addr, local, remote string) (string, error)
 
 // serveIdent answers ident queries on ln, handling at most max
 // connections at once; one past that is closed straight away. It
 // returns when ln is closed.
-func serveIdent(ln net.Listener, find func(local, remote string) (string, error), max int) error {
+func serveIdent(ln net.Listener, find lookupFunc, max int) error {
 	slots := make(chan struct{}, max)
 	for {
 		conn, err := ln.Accept()
@@ -57,7 +65,7 @@ func serveIdent(ln net.Listener, find func(local, remote string) (string, error)
 			if errors.Is(err, net.ErrClosed) {
 				return err
 			}
-			log.Printf("Error accepting: %v", err)
+			log.Printf("accepting: %v", err)
 			time.Sleep(100 * time.Millisecond) // out of fds: don't spin
 			continue
 		}
@@ -97,26 +105,65 @@ var errNoUser = errors.New("no user")
 // lookup finds the user owning the connection from local to remote
 // in any of the portmaps. It returns errNoUser only when every
 // portmap was read; if one failed, it returns that failure instead,
-// since the connection may be the unreadable instance's.
-func lookup(urls []string, local, remote string) (string, error) {
+// since the connection may be the unreadable instance's. One with
+// nothing listening isn't running, so has no connections, and counts
+// as read.
+//
+// Only the server at the other end may ask (RFC 1413), so an entry
+// with the server's ip matches only a query from that ip. An older
+// liercd's entries have no ip and match on ports alone.
+func lookup(urls []string, asker netip.Addr, local, remote string) (string, error) {
 	var failed error
 	for _, url := range urls {
 		ports, err := fetchPortmap(url)
+		noteFetch(url, err)
 		if err != nil {
-			log.Printf("Error reading portmap %s: %v", url, err)
-			failed = err
+			if !errors.Is(err, syscall.ECONNREFUSED) {
+				failed = err
+			}
 			continue
 		}
 		for _, mapping := range ports {
-			if len(mapping) >= 3 && mapping[1] == local && mapping[2] == remote {
+			if len(mapping) < 3 || mapping[1] != local || mapping[2] != remote {
+				continue
+			}
+			if len(mapping) < 4 {
 				return mapping[0], nil
 			}
+			if ip, err := netip.ParseAddr(mapping[3]); err == nil && ip.Unmap() == asker.Unmap() {
+				return mapping[0], nil
+			}
+			// logged: a network whose ident check comes from
+			// another address would show up here
+			log.Printf("%s: asked for %s, %s, which is to %s", asker, local, remote, mapping[3])
 		}
 	}
 	if failed != nil {
 		return "", failed
 	}
 	return "", errNoUser
+}
+
+// down holds the portmaps that failed their last read.
+var down = struct {
+	sync.Mutex
+	urls map[string]bool
+}{urls: map[string]bool{}}
+
+// noteFetch logs a portmap going unreachable or coming back, rather
+// than every failed read: with an instance stopped, every query would
+// log one.
+func noteFetch(url string, err error) {
+	down.Lock()
+	defer down.Unlock()
+	switch {
+	case err != nil && !down.urls[url]:
+		down.urls[url] = true
+		log.Printf("portmap %s unreachable: %v", url, err)
+	case err == nil && down.urls[url]:
+		delete(down.urls, url)
+		log.Printf("portmap %s is back", url)
+	}
 }
 
 func fetchPortmap(url string) ([][]string, error) {
@@ -138,24 +185,45 @@ func fetchPortmap(url string) ([][]string, error) {
 // handle answers the queries on conn, one per line, until the client
 // closes it, it has asked maxQueries, it sends a line over maxLineLen,
 // or connTimeout passes.
-func handle(conn net.Conn, find func(local, remote string) (string, error)) {
+func handle(conn net.Conn, lookup lookupFunc) {
 	defer conn.Close()
+	// not a TCP peer (in tests): the zero Addr, which no entry's ip is
+	var asker netip.Addr
+	if a, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		asker = a.AddrPort().Addr().Unmap()
+	}
+	find := func(local, remote string) (string, error) {
+		return lookup(asker, local, remote)
+	}
+	from := conn.RemoteAddr().String()
+	if asker.IsValid() {
+		from = asker.String()
+	}
 	conn.SetDeadline(time.Now().Add(connTimeout))
 	reader := bufio.NewReaderSize(conn, maxLineLen)
 
 	for range maxQueries {
 		line, err := reader.ReadSlice('\n')
 		if err != nil {
-			if errors.Is(err, bufio.ErrBufferFull) {
-				log.Printf("%s: line too long", conn.RemoteAddr())
-			} else if err != io.EOF {
-				log.Printf("%s: %v", conn.RemoteAddr(), err)
+			switch {
+			case errors.Is(err, bufio.ErrBufferFull):
+				log.Printf("%s: line too long", from)
+			case errors.Is(err, os.ErrDeadlineExceeded):
+				log.Printf("%s: timed out", from)
+			case err != io.EOF:
+				log.Printf("%s: %v", from, err)
 			}
 			return
 		}
 		query := strings.TrimRight(string(line), "\r\n")
 		out := reply(query, find)
-		log.Printf("%s: %q: %s", conn.RemoteAddr(), truncate(query, 100), strings.TrimSuffix(out, "\n"))
+		// the reply names the ports; an invalid query's doesn't, so
+		// show what was sent
+		if out == invalidReply {
+			log.Printf("%s: %q : ERROR : INVALID-PORT", from, truncate(query, 100))
+		} else {
+			log.Printf("%s: %s", from, strings.TrimSuffix(out, "\n"))
+		}
 		if _, err := io.WriteString(conn, out); err != nil {
 			return
 		}
@@ -169,17 +237,19 @@ func truncate(s string, n int) string {
 	return s
 }
 
+const invalidReply = "0, 0 : ERROR : INVALID-PORT\n"
+
 // reply answers one ident request line ("local , remote") using find
 // to look up the connection's user.
 func reply(line string, find func(local, remote string) (string, error)) string {
 	parts := strings.SplitN(line, ",", 2)
 	if len(parts) != 2 {
-		return "0, 0 : ERROR : INVALID-PORT\n"
+		return invalidReply
 	}
 	local, okLocal := parsePort(parts[0])
 	remote, okRemote := parsePort(parts[1])
 	if !okLocal || !okRemote {
-		return "0, 0 : ERROR : INVALID-PORT\n"
+		return invalidReply
 	}
 
 	user, err := find(local, remote)

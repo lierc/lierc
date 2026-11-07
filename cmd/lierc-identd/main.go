@@ -10,13 +10,26 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Ident clients give up after about 10-30 seconds; don't let a hung
 // liercd hold a reply past that.
 var httpClient = &http.Client{Timeout: 5 * time.Second}
+
+// Port 113 is open to the internet, for the IRC servers liercd
+// connects to. These keep what anyone else can make it do small.
+var connTimeout = 30 * time.Second // a whole connection, however busy
+
+const (
+	maxConns   = 200  // connections handled at once; more are closed
+	maxQueries = 10   // per connection; a server asks once
+	maxLineLen = 1000 // a query line, with its line ending
+	maxUserLen = 64   // characters of the user id sent back
+)
 
 func main() {
 	urls := portmapURLs(os.Getenv("LIERCD_HOST"), os.Getenv("LIERCD_NEXT_HOST"))
@@ -28,13 +41,35 @@ func main() {
 
 	log.Printf("listening on port 113, portmaps %s", strings.Join(urls, " "))
 
+	log.Fatal(serveIdent(ln, func(local, remote string) (string, error) {
+		return lookup(urls, local, remote)
+	}, maxConns))
+}
+
+// serveIdent answers ident queries on ln, handling at most max
+// connections at once; one past that is closed straight away. It
+// returns when ln is closed.
+func serveIdent(ln net.Listener, find func(local, remote string) (string, error), max int) error {
+	slots := make(chan struct{}, max)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return err
+			}
 			log.Printf("Error accepting: %v", err)
+			time.Sleep(100 * time.Millisecond) // out of fds: don't spin
 			continue
 		}
-		go handleConnection(conn, urls)
+		select {
+		case slots <- struct{}{}:
+			go func() {
+				defer func() { <-slots }()
+				handle(conn, find)
+			}()
+		default:
+			conn.Close()
+		}
 	}
 }
 
@@ -100,31 +135,38 @@ func fetchPortmap(url string) ([][]string, error) {
 	return ports, nil
 }
 
-func handleConnection(conn net.Conn, urls []string) {
+// handle answers the queries on conn, one per line, until the client
+// closes it, it has asked maxQueries, it sends a line over maxLineLen,
+// or connTimeout passes.
+func handle(conn net.Conn, find func(local, remote string) (string, error)) {
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
+	conn.SetDeadline(time.Now().Add(connTimeout))
+	reader := bufio.NewReaderSize(conn, maxLineLen)
 
-	for {
-		line, err := reader.ReadString('\n')
-
-		if err == io.EOF {
-			return
-		}
-
+	for range maxQueries {
+		line, err := reader.ReadSlice('\n')
 		if err != nil {
-			log.Printf("Failed to read line: %v", err)
+			if errors.Is(err, bufio.ErrBufferFull) {
+				log.Printf("%s: line too long", conn.RemoteAddr())
+			} else if err != io.EOF {
+				log.Printf("%s: %v", conn.RemoteAddr(), err)
+			}
 			return
 		}
-
-		line = strings.TrimSuffix(line, "\r\n")
-		log.Printf("%s", line)
-
-		out := reply(line, func(local, remote string) (string, error) {
-			return lookup(urls, local, remote)
-		})
-		log.Print(out)
-		conn.Write([]byte(out))
+		query := strings.TrimRight(string(line), "\r\n")
+		out := reply(query, find)
+		log.Printf("%s: %q: %s", conn.RemoteAddr(), truncate(query, 100), strings.TrimSuffix(out, "\n"))
+		if _, err := io.WriteString(conn, out); err != nil {
+			return
+		}
 	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
 }
 
 // reply answers one ident request line ("local , remote") using find
@@ -132,13 +174,20 @@ func handleConnection(conn net.Conn, urls []string) {
 func reply(line string, find func(local, remote string) (string, error)) string {
 	parts := strings.SplitN(line, ",", 2)
 	if len(parts) != 2 {
-		return fmt.Sprintf("%s : ERROR : INVALID-PORT\n", line)
+		return "0, 0 : ERROR : INVALID-PORT\n"
+	}
+	local, okLocal := parsePort(parts[0])
+	remote, okRemote := parsePort(parts[1])
+	if !okLocal || !okRemote {
+		return "0, 0 : ERROR : INVALID-PORT\n"
 	}
 
-	local := strings.TrimSpace(parts[0])
-	remote := strings.TrimSpace(parts[1])
-
 	user, err := find(local, remote)
+	if err == nil {
+		if user = cleanUser(user); user == "" {
+			err = errNoUser
+		}
+	}
 	switch {
 	case err == nil:
 		return fmt.Sprintf("%s, %s : USERID : UNIX : %s\n", local, remote, user)
@@ -147,4 +196,38 @@ func reply(line string, find func(local, remote string) (string, error)) string 
 	default:
 		return fmt.Sprintf("%s, %s : ERROR : UNKNOWN-ERROR\n", local, remote)
 	}
+}
+
+// parsePort reads a port number, 1 to 65535, written as digits with
+// spaces around, and gives it back plainly written, as the portmap
+// has it.
+func parsePort(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.Trim(s, "0123456789") != "" {
+		return "", false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > 65535 {
+		return "", false
+	}
+	return strconv.Itoa(n), true
+}
+
+// cleanUser makes a user id safe to send: the user sets it, and a line
+// break or colon in it would change the reply. It keeps printable
+// characters other than spaces and colons, up to maxUserLen of them.
+func cleanUser(user string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range user {
+		if n == maxUserLen {
+			break
+		}
+		if !unicode.IsPrint(r) || unicode.IsSpace(r) || r == ':' {
+			continue
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
 }

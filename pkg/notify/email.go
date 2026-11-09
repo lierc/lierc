@@ -3,27 +3,34 @@ package notify
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/smtp"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	DefaultSMTPHost = "127.0.0.1"
 	DefaultSMTPPort = 25
+	// DefaultSMTPTimeout bounds connecting and each read and write, as
+	// the Perl API's Net::SMTP Timeout does.
+	DefaultSMTPTimeout = 10 * time.Second
 )
 
 // SetSMTPOpts configures the email notifier from a comma separated list of
 // key value pairs, as found in the SMTP_OPTS env var. For example:
 //
-//	Host,smtp.example.com,Port,465,SSL,1,AuthUser,me,AuthPass,secret
+//	Host,smtp.example.com,Port,465,SSL,1,AuthUser,me,AuthPass,secret,Timeout,10
 //
-// Recognized keys are Host, Port, SSL, AuthUser and AuthPass. Anything left
-// unset falls back to 127.0.0.1:25 without SSL or authentication.
+// Recognized keys are Host, Port, SSL, AuthUser, AuthPass and Timeout (in
+// seconds, as for the Perl API's Net::SMTP). Anything left unset falls back
+// to 127.0.0.1:25 without SSL or authentication, with a 10s timeout.
 func (c *NotifierConfig) SetSMTPOpts(opts string) error {
 	c.SMTPHost = DefaultSMTPHost
 	c.SMTPPort = DefaultSMTPPort
+	c.SMTPTimeout = DefaultSMTPTimeout
 
 	opts = strings.TrimSpace(opts)
 
@@ -56,6 +63,12 @@ func (c *NotifierConfig) SetSMTPOpts(opts string) error {
 			c.SMTPAuthUser = value
 		case "authpass":
 			c.SMTPAuthPass = value
+		case "timeout":
+			secs, err := strconv.ParseFloat(value, 64)
+			if err != nil || secs <= 0 {
+				return fmt.Errorf("invalid SMTP timeout %s: want a positive number of seconds", value)
+			}
+			c.SMTPTimeout = time.Duration(secs * float64(time.Second))
 		default:
 			return fmt.Errorf("unknown SMTP opt %s", key)
 		}
@@ -132,29 +145,68 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) error {
 	return n.sendMail("notifications@relaychat.party", emailAddress, msg)
 }
 
+func (c *NotifierConfig) smtpTimeout() time.Duration {
+	if c.SMTPTimeout <= 0 {
+		return DefaultSMTPTimeout
+	}
+	return c.SMTPTimeout
+}
+
+// deadlineConn gives every read and write its own deadline, so a server
+// that stops answering fails the send, while a slow but working one
+// doesn't.
+type deadlineConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *deadlineConn) Read(b []byte) (int, error) {
+	c.Conn.SetDeadline(time.Now().Add(c.timeout))
+	return c.Conn.Read(b)
+}
+
+func (c *deadlineConn) Write(b []byte) (int, error) {
+	c.Conn.SetDeadline(time.Now().Add(c.timeout))
+	return c.Conn.Write(b)
+}
+
 func (n *Notifier) sendMail(from string, to string, msg []byte) error {
 	host, port := n.Config.SMTPAddress()
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	auth := n.Config.SMTPAuth(host)
+	timeout := n.Config.smtpTimeout()
 
-	if !n.Config.SMTPSSL {
-		return smtp.SendMail(addr, auth, from, []string{to}, msg)
-	}
-
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: host})
-
+	raw, err := (&net.Dialer{Timeout: timeout}).Dial("tcp", addr)
 	if err != nil {
 		return err
+	}
+	var conn net.Conn = &deadlineConn{Conn: raw, timeout: timeout}
+	tlsConfig := &tls.Config{ServerName: host}
+
+	if n.Config.SMTPSSL {
+		tc := tls.Client(conn, tlsConfig)
+		if err := tc.Handshake(); err != nil {
+			raw.Close()
+			return err
+		}
+		conn = tc
 	}
 
 	c, err := smtp.NewClient(conn, host)
-
 	if err != nil {
-		conn.Close()
+		raw.Close()
 		return err
 	}
-
 	defer c.Close()
+
+	// as smtp.SendMail does: upgrade a plain connection when offered
+	if !n.Config.SMTPSSL {
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(tlsConfig); err != nil {
+				return err
+			}
+		}
+	}
 
 	if auth != nil {
 		if err := c.Auth(auth); err != nil {
@@ -165,24 +217,18 @@ func (n *Notifier) sendMail(from string, to string, msg []byte) error {
 	if err := c.Mail(from); err != nil {
 		return err
 	}
-
 	if err := c.Rcpt(to); err != nil {
 		return err
 	}
-
 	w, err := c.Data()
-
 	if err != nil {
 		return err
 	}
-
 	if _, err := w.Write(msg); err != nil {
 		return err
 	}
-
 	if err := w.Close(); err != nil {
 		return err
 	}
-
 	return c.Quit()
 }

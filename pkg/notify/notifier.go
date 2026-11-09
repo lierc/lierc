@@ -47,6 +47,7 @@ type NotifierConfig struct {
 	SMTPSSL         bool
 	SMTPAuthUser    string
 	SMTPAuthPass    string
+	SMTPTimeout     time.Duration // per read and write; 0 means DefaultSMTPTimeout
 	Delay           time.Duration
 	UserRateLimit   time.Duration
 }

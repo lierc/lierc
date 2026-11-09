@@ -187,6 +187,7 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 	ctx := context.Background()
 
 	route := routeChat(m.Message)
+	messagesTotal[route.kind.String()].Inc()
 
 	switch route.kind {
 	case logSkip:
@@ -203,6 +204,9 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 	}
 
 	highlight := l.highlights.Match(m.Id, m.Message)
+	if highlight {
+		highlightsTotal.Inc()
+	}
 
 	id, err := l.store.InsertMessage(ctx, m.Id, m.Message, route.channel, highlight)
 	if err != nil && !errors.Is(err, ErrNoConnection) {
@@ -231,6 +235,7 @@ func (l *Logger) handleMulti(n *nsq.Message) error {
 		log.Printf("dropping multi message without a message\n%s", n.Body)
 		return nil
 	}
+	messagesTotal["multi"].Inc()
 
 	id, err := l.store.InsertMessages(context.Background(), m.Id, m.Message, m.Channels)
 	if err != nil && !errors.Is(err, ErrNoConnection) {

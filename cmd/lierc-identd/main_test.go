@@ -414,6 +414,13 @@ func TestServePassesAsker(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no lookup")
 	}
+	// Read the reply before closing: closing with it unread resets the
+	// connection, and the handler's "connection reset" log line lands in
+	// whichever test is capturing the log next.
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := bufio.NewReader(c).ReadString('\n'); err != nil {
+		t.Errorf("reply: %v", err)
+	}
 }
 
 type logBuf struct {

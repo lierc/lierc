@@ -246,11 +246,13 @@ const invalidReply = "0, 0 : ERROR : INVALID-PORT\n"
 func reply(line string, find func(local, remote string) (string, error)) string {
 	parts := strings.SplitN(line, ",", 2)
 	if len(parts) != 2 {
+		queries["invalid"].Inc()
 		return invalidReply
 	}
 	local, okLocal := parsePort(parts[0])
 	remote, okRemote := parsePort(parts[1])
 	if !okLocal || !okRemote {
+		queries["invalid"].Inc()
 		return invalidReply
 	}
 
@@ -262,10 +264,13 @@ func reply(line string, find func(local, remote string) (string, error)) string 
 	}
 	switch {
 	case err == nil:
+		queries["user"].Inc()
 		return fmt.Sprintf("%s, %s : USERID : UNIX : %s\n", local, remote, user)
 	case errors.Is(err, errNoUser):
+		queries["no_user"].Inc()
 		return fmt.Sprintf("%s, %s : ERROR : NO-USER\n", local, remote)
 	default:
+		queries["error"].Inc()
 		return fmt.Sprintf("%s, %s : ERROR : UNKNOWN-ERROR\n", local, remote)
 	}
 }

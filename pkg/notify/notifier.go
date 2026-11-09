@@ -410,37 +410,47 @@ func (n *Notifier) Send(o *Notification) {
 	n.Mu.Unlock()
 
 	var wg sync.WaitGroup
-	attempt := func(what string, f func()) {
+	// Each send is counted once, under kind: by what f reports, or as a
+	// failure if it panics.
+	attempt := func(kind, what string, f func() bool) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			status := "failure"
 			defer func() {
 				if r := recover(); r != nil {
 					log.Printf("%s for %s failed: panic: %v", what, o.User, r)
 				}
+				notificationsTotal[kind+"/"+status].Inc()
 			}()
-			f()
+			if f() {
+				status = "success"
+			}
 		}()
 	}
 
 	if o.Pref.EmailEnabled {
-		attempt("email", func() { n.sendEmail(o) })
+		attempt("email", "email", func() bool { return n.sendEmail(o) })
 	}
 	for _, c := range o.Pref.WebPushConfigs {
-		attempt("web push to "+c.Endpoint, func() { n.sendWebPush(o, c) })
+		attempt("webpush", "web push to "+c.Endpoint, func() bool { return n.sendWebPush(o, c) })
 	}
 	wg.Wait()
 }
 
-func (n *Notifier) sendEmail(o *Notification) {
+// sendEmail emails o, logs the outcome and reports whether it was sent.
+func (n *Notifier) sendEmail(o *Notification) bool {
 	if err := n.SendEmail(o.Messages, o.Pref.EmailAddress); err != nil {
 		log.Printf("email to %s failed: %v", o.User, err)
-		return
+		return false
 	}
 	log.Printf("emailed %s (%d messages)", o.User, len(o.Messages))
+	return true
 }
 
-func (n *Notifier) sendWebPush(o *Notification, c *WebPushConfig) {
+// sendWebPush pushes o to c, logs the outcome and reports whether the
+// push service accepted it.
+func (n *Notifier) sendWebPush(o *Notification, c *WebPushConfig) bool {
 	res, body, err := n.SendWebPush(o.Messages, c)
 	switch {
 	case err != nil:
@@ -452,7 +462,9 @@ func (n *Notifier) sendWebPush(o *Notification, c *WebPushConfig) {
 		log.Printf("web push to %s for %s failed: %s %s", c.Endpoint, c.User, res.Status, strings.TrimSpace(string(body)))
 	default:
 		log.Printf("web push to %s for %s: %s (%d messages)", c.Endpoint, c.User, res.Status, len(o.Messages))
+		return true
 	}
+	return false
 }
 
 func (n *Notifier) DeleteWebPushConfig(c *WebPushConfig) {

@@ -25,13 +25,13 @@ func TestStreamCount(t *testing.T) {
 	if c, err := n.StreamCount("8"); err != nil || c != 0 {
 		t.Errorf("user 8: %d, %v", c, err)
 	}
-	if !n.hasStreams("7") || n.hasStreams("8") {
-		t.Error("hasStreams wrong")
+	if n.openStreams("7") != 2 || n.openStreams("8") != 0 {
+		t.Error("openStreams wrong")
 	}
 }
 
-// Every way stats can fail is an error from StreamCount, and hasStreams
-// answers false so the notification still goes out.
+// Every way stats can fail is an error from StreamCount, and openStreams
+// answers 0 so the notification still goes out.
 func TestStreamCountUnavailable(t *testing.T) {
 	old := statsTimeout
 	statsTimeout = 100 * time.Millisecond
@@ -74,8 +74,8 @@ func TestStreamCountUnavailable(t *testing.T) {
 		if _, err := n.StreamCount("7"); err == nil {
 			t.Errorf("%s: no error", name)
 		}
-		if n.hasStreams("7") {
-			t.Errorf("%s: hasStreams true", name)
+		if n.openStreams("7") != 0 {
+			t.Errorf("%s: openStreams not 0", name)
 		}
 		if d := time.Since(start); d > 2*time.Second {
 			t.Errorf("%s: took %s", name, d)

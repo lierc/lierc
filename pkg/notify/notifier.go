@@ -11,7 +11,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -174,16 +173,16 @@ func (n *Notifier) StreamCount(user string) (int, error) {
 	return counts[user], nil
 }
 
-// hasStreams reports whether the user has a stream open. If stats can't be
-// fetched it logs and answers false: notifying someone who may be online
+// openStreams is how many streams the user has open. If stats can't be
+// fetched it logs and answers 0: notifying someone who may be online
 // (still subject to the rate limits) beats dropping the notification.
-func (n *Notifier) hasStreams(user string) bool {
+func (n *Notifier) openStreams(user string) int {
 	count, err := n.StreamCount(user)
 	if err != nil {
 		log.Printf("stream stats unavailable, notifying %s anyway: %v", user, err)
-		return false
+		return 0
 	}
-	return count > 0
+	return count
 }
 
 func (n *Notifier) RemoveNotification(user string) {
@@ -203,11 +202,11 @@ func (n *Notifier) AddNotification(u string, p *NotificationPref, m *LoggedMessa
 	if o, ok := n.Notifications[u]; ok {
 		o.Messages = append(o.Messages, m)
 		o.Timer.Reset(n.Config.Delay)
-		fmt.Fprintf(os.Stderr, "Accumulating message on %s\n", u)
+		log.Printf("highlight %d for %s added to pending notification (%d messages)", m.MessageId, u, len(o.Messages))
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "New message on %s\n", u)
+	log.Printf("highlight %d for %s: notifying in %s", m.MessageId, u, n.Config.Delay)
 
 	o := &Notification{
 		Pref:     p,
@@ -219,11 +218,11 @@ func (n *Notifier) AddNotification(u string, p *NotificationPref, m *LoggedMessa
 
 	o.Timer = time.AfterFunc(n.Config.Delay, func() {
 		n.RemoveNotification(u)
-		if !n.hasStreams(u) {
-			n.Send(o)
-		} else {
-			fmt.Fprintf(os.Stderr, "Skipping notification due to open streams\n")
+		if streams := n.openStreams(u); streams > 0 {
+			log.Printf("not notifying %s: %d open streams", u, streams)
+			return
 		}
+		n.Send(o)
 	})
 }
 
@@ -266,7 +265,8 @@ func (n *Notifier) accumulate(m *LoggedMessage) {
 	}
 
 	// Skip if user has any streams open
-	if n.hasStreams(user) {
+	if streams := n.openStreams(user); streams > 0 {
+		log.Printf("highlight %d for %s not notified: %d open streams", m.MessageId, user, streams)
 		n.RemoveNotification(user)
 		return
 	}
@@ -335,12 +335,15 @@ func (n *Notifier) lookup(connection string) (string, *NotificationPref, error) 
 	}, nil
 }
 
-func (n *Notifier) UserRateLimit(user string) bool {
-	limit := n.Config.UserRateLimit
-
-	if limit == 0 {
-		limit = DefaultUserRateLimit
+func (n *Notifier) userRateLimit() time.Duration {
+	if n.Config.UserRateLimit == 0 {
+		return DefaultUserRateLimit
 	}
+	return n.Config.UserRateLimit
+}
+
+func (n *Notifier) UserRateLimit(user string) bool {
+	limit := n.userRateLimit()
 
 	n.Mu.Lock()
 	ts, ok := n.Last[user]
@@ -360,60 +363,96 @@ func (n *Notifier) GlobalRateLimit() bool {
 	if !rv.OK() {
 		return true
 	}
-	delay := rv.Delay()
-	fmt.Fprintf(os.Stderr, "Delaying email for %s seconds\n", delay)
-	time.Sleep(delay)
+	if delay := rv.Delay(); delay > 0 {
+		log.Printf("global rate limit: waiting %s", delay)
+		time.Sleep(delay)
+	}
 	return false
 }
 
 func (n *Notifier) RateLimit(user string) bool {
 	if n.UserRateLimit(user) {
-		fmt.Fprintf(os.Stderr, "User rate limit hit\n")
+		log.Printf("not notifying %s: notified less than %s ago", user, n.userRateLimit())
 		return true
 	}
 
 	if n.GlobalRateLimit() {
-		fmt.Fprintf(os.Stderr, "Global rate limit hit\n")
+		log.Printf("not notifying %s: global rate limit", user)
 		return true
 	}
 
 	return false
 }
 
+// Send notifies the user by email and every web push subscription they
+// have. Each method runs on its own, so one that fails, panics or hangs
+// doesn't stop the others being tried.
 func (n *Notifier) Send(o *Notification) {
-	if n.RateLimit(o.User) {
-		fmt.Fprintf(os.Stderr, "Canceling notification\n")
+	if !o.Pref.EmailEnabled && len(o.Pref.WebPushConfigs) == 0 {
+		log.Printf("not notifying %s: email off and no web push subscriptions", o.User)
 		return
 	}
 
-	if o.Pref.EmailEnabled {
-		if err := n.SendEmail(o.Messages, o.Pref.EmailAddress); err != nil {
-			log.Printf("error sending email for %s: %v", o.User, err)
-		}
+	if n.RateLimit(o.User) {
+		return
 	}
 
-	for _, c := range o.Pref.WebPushConfigs {
-		res, err := n.SendWebPush(o.Messages, c)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error sending webpush to %s for %s: %s\n", c.Endpoint, c.User, err)
-		} else if WebPushGone(res.StatusCode) {
-			fmt.Fprintf(os.Stderr, "Deleting webpush %s for %s: %s\n", c.Endpoint, c.User, res.Status)
-			n.DeleteWebPushConfig(c)
-		} else if res.StatusCode >= 400 {
-			fmt.Fprintf(os.Stderr, "Webpush to %s for %s failed: %s\n", c.Endpoint, c.User, res.Status)
-		}
-	}
-
+	// Recorded before sending, so the user rate limit holds while a slow
+	// send is still going.
 	n.Mu.Lock()
-	defer n.Mu.Unlock()
-
 	n.Last[o.User] = time.Now()
+	n.Mu.Unlock()
+
+	var wg sync.WaitGroup
+	attempt := func(what string, f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("%s for %s failed: panic: %v", what, o.User, r)
+				}
+			}()
+			f()
+		}()
+	}
+
+	if o.Pref.EmailEnabled {
+		attempt("email", func() { n.sendEmail(o) })
+	}
+	for _, c := range o.Pref.WebPushConfigs {
+		attempt("web push to "+c.Endpoint, func() { n.sendWebPush(o, c) })
+	}
+	wg.Wait()
+}
+
+func (n *Notifier) sendEmail(o *Notification) {
+	if err := n.SendEmail(o.Messages, o.Pref.EmailAddress); err != nil {
+		log.Printf("email to %s failed: %v", o.User, err)
+		return
+	}
+	log.Printf("emailed %s (%d messages)", o.User, len(o.Messages))
+}
+
+func (n *Notifier) sendWebPush(o *Notification, c *WebPushConfig) {
+	res, body, err := n.SendWebPush(o.Messages, c)
+	switch {
+	case err != nil:
+		log.Printf("web push to %s for %s failed: %v", c.Endpoint, c.User, err)
+	case WebPushGone(res.StatusCode):
+		log.Printf("web push to %s for %s: %s, deleting the subscription", c.Endpoint, c.User, res.Status)
+		n.DeleteWebPushConfig(c)
+	case res.StatusCode >= 400:
+		log.Printf("web push to %s for %s failed: %s %s", c.Endpoint, c.User, res.Status, strings.TrimSpace(string(body)))
+	default:
+		log.Printf("web push to %s for %s: %s (%d messages)", c.Endpoint, c.User, res.Status, len(o.Messages))
+	}
 }
 
 func (n *Notifier) DeleteWebPushConfig(c *WebPushConfig) {
 	db, err := n.DB()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error deleting webpush: %s\n", err)
+		log.Printf("deleting web push %s for %s: %v", c.Endpoint, c.User, err)
 		return
 	}
 	_, err = db.Exec(`
@@ -422,6 +461,6 @@ func (n *Notifier) DeleteWebPushConfig(c *WebPushConfig) {
 	`, c.User, c.Endpoint)
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error deleting webpush: %s\n", err)
+		log.Printf("deleting web push %s for %s: %v", c.Endpoint, c.User, err)
 	}
 }

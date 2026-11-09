@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/smtp"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -114,8 +113,6 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) error {
 			subject = fmt.Sprintf("[%s] < %s> %s", channel, from, text)
 		}
 	}
-
-	fmt.Fprintf(os.Stderr, "sending email '%s'\n", emailAddress)
 
 	msg := []byte(fmt.Sprintf("To: %s\r\n", emailAddress) +
 		fmt.Sprintf(

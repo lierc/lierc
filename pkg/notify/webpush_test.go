@@ -38,7 +38,7 @@ func TestSendWebPushSendsVAPIDPublicKey(t *testing.T) {
 		VAPIDPrivateKey: private,
 		VAPIDPublicKey:  public,
 	}}
-	res, err := n.SendWebPush([]*LoggedMessage{}, &WebPushConfig{
+	res, _, err := n.SendWebPush([]*LoggedMessage{}, &WebPushConfig{
 		Endpoint: srv.URL + "/push/abc",
 		Key:      base64.RawURLEncoding.EncodeToString(browser.PublicKey().Bytes()),
 		Auth:     base64.RawURLEncoding.EncodeToString(secret),

@@ -216,3 +216,21 @@ func TestSendEmailFailure(t *testing.T) {
 		t.Error("send not recorded")
 	}
 }
+
+// A highlight for a user with an open stream is dropped, and logged.
+func TestAccumulateOpenStreamsLogged(t *testing.T) {
+	db := testDB(t)
+	logs := captureLog(t)
+	n := accumulateNotifier(t, db)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"u1":1}`))
+	}))
+	defer srv.Close()
+	n.Config.APIStats = srv.URL + "/stats"
+
+	n.accumulate(highlight("c1", time.Now()))
+	if len(n.Notifications) != 0 {
+		t.Errorf("queued: %+v", n.Notifications)
+	}
+	logs.mustContain(t, "highlight 1 for u1 not notified: 1 open streams")
+}

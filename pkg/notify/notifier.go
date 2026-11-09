@@ -25,6 +25,11 @@ type Notifier struct {
 	Config        *NotifierConfig
 	Queue         chan *LoggedMessage
 
+	// PushHTTP sends web pushes; nil means a client that refuses private
+	// addresses (newPushClient). Tests set it to reach httptest servers.
+	PushHTTP *http.Client
+	pushOnce sync.Once
+
 	dbOnce sync.Once
 	db     *sql.DB
 	dbErr  error

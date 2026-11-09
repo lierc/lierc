@@ -33,7 +33,7 @@ func TestSendWebPushSendsVAPIDPublicKey(t *testing.T) {
 	secret := make([]byte, 16)
 	rand.Read(secret)
 
-	n := &Notifier{Config: &NotifierConfig{
+	n := &Notifier{PushHTTP: &http.Client{}, Config: &NotifierConfig{
 		APIURL:          "https://relaychat.party",
 		VAPIDPrivateKey: private,
 		VAPIDPublicKey:  public,

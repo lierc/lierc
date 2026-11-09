@@ -88,6 +88,7 @@ func subscription(t *testing.T, endpoint string) *WebPushConfig {
 func sendNotifier(t *testing.T, smtpAddr string) *Notifier {
 	n := accumulateNotifier(t, nil)
 	n.Limiter = rate.NewLimiter(rate.Inf, 1)
+	n.PushHTTP = &http.Client{} // the push services are httptest servers on 127.0.0.1
 	private, public, err := webpush.GenerateVAPIDKeys()
 	if err != nil {
 		t.Fatal(err)

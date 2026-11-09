@@ -134,6 +134,7 @@ func (n *Notifier) SendWebPush(m []*LoggedMessage, c *WebPushConfig) (*http.Resp
 		Subscriber:      n.Config.APIURL,
 		TTL:             int(pushTTL / time.Second),
 		Urgency:         webpush.UrgencyHigh,
+		HTTPClient:      n.pushClient(),
 		VAPIDPrivateKey: n.Config.VAPIDPrivateKey,
 		VAPIDPublicKey:  n.Config.VAPIDPublicKey,
 	})

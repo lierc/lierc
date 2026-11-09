@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/lierc/lierc/pkg/metrics"
 	"log"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 )
 
 func main() {
+	metrics.Serve(os.Getenv("METRICS_LISTEN"))
 	conf := &logger.Config{
 		DBUser:   os.Getenv("POSTGRES_USER"),
 		DBPass:   os.Getenv("POSTGRES_PASSWORD"),

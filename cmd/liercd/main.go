@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/lierc/lierc/pkg/liercd"
+	"github.com/lierc/lierc/pkg/metrics"
 	"github.com/nsqio/go-nsq"
 	"log"
 	"net"
@@ -38,6 +39,7 @@ func listenAddr() string {
 }
 
 func main() {
+	metrics.Serve(os.Getenv("METRICS_LISTEN"))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

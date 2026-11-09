@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/lierc/lierc/pkg/metrics"
 	"github.com/lierc/lierc/pkg/notify"
 	"golang.org/x/time/rate"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 )
 
 func main() {
+	metrics.Serve(os.Getenv("METRICS_LISTEN"))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 

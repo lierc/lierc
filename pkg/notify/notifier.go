@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,10 @@ type Notifier struct {
 	Limiter       *rate.Limiter
 	Config        *NotifierConfig
 	Queue         chan *LoggedMessage
+
+	dbOnce sync.Once
+	db     *sql.DB
+	dbErr  error
 }
 
 const DefaultUserRateLimit = 10 * time.Minute
@@ -34,7 +39,6 @@ type NotifierConfig struct {
 	DBHost          string
 	DBName          string
 	APIStats        string
-	APIKey          string
 	APIURL          string
 	VAPIDPrivateKey string
 	VAPIDPublicKey  string
@@ -100,6 +104,11 @@ func (n *Notifier) handleHighlight(m *nsq.Message) error {
 		log.Printf("dropping unreadable highlight message: %v\n%s", err, m.Body)
 		return nil
 	}
+	// Email and web push need a sender and the message text.
+	if msg := logged.Message; msg == nil || msg.Prefix == nil || len(msg.Params) < 2 {
+		log.Printf("dropping highlight without a sender or text: %s", m.Body)
+		return nil
+	}
 
 	n.Queue <- &logged
 	return nil
@@ -128,35 +137,53 @@ func retry(what string, f func() error) {
 	}
 }
 
-func (n *Notifier) StreamCount(connection string) int {
+// statsTimeout bounds one /stats request, so a hung stream server can't
+// stall the queue.
+var statsTimeout = 5 * time.Second
 
-	req, err := http.NewRequest("GET", n.Config.APIStats, nil)
+// StreamCount asks the stream server's admin listener (API_STATS, on
+// loopback, no key) how many streams the user has open.
+func (n *Notifier) StreamCount(user string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), statsTimeout)
+	defer cancel()
 
+	req, err := http.NewRequestWithContext(ctx, "GET", n.Config.APIStats, nil)
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
 
-	req.Header.Set("Lierc-Key", n.Config.APIKey)
 	res, err := n.Client.Do(req)
-
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
+	defer res.Body.Close()
 
 	body, err := ioutil.ReadAll(res.Body)
-
 	if err != nil {
-		panic(err)
+		return 0, err
+	}
+	if res.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("%s: %s", res.Status, strings.TrimSpace(string(body)))
 	}
 
 	var counts map[string]int
-	json.Unmarshal(body, &counts)
-
-	if count, ok := counts[connection]; ok {
-		return count
+	if err := json.Unmarshal(body, &counts); err != nil {
+		return 0, err
 	}
 
-	return 0
+	return counts[user], nil
+}
+
+// hasStreams reports whether the user has a stream open. If stats can't be
+// fetched it logs and answers false: notifying someone who may be online
+// (still subject to the rate limits) beats dropping the notification.
+func (n *Notifier) hasStreams(user string) bool {
+	count, err := n.StreamCount(user)
+	if err != nil {
+		log.Printf("stream stats unavailable, notifying %s anyway: %v", user, err)
+		return false
+	}
+	return count > 0
 }
 
 func (n *Notifier) RemoveNotification(user string) {
@@ -192,7 +219,7 @@ func (n *Notifier) AddNotification(u string, p *NotificationPref, m *LoggedMessa
 
 	o.Timer = time.AfterFunc(n.Config.Delay, func() {
 		n.RemoveNotification(u)
-		if n.StreamCount(u) == 0 {
+		if !n.hasStreams(u) {
 			n.Send(o)
 		} else {
 			fmt.Fprintf(os.Stderr, "Skipping notification due to open streams\n")
@@ -200,102 +227,112 @@ func (n *Notifier) AddNotification(u string, p *NotificationPref, m *LoggedMessa
 	})
 }
 
-func (n *Notifier) DB() *sql.DB {
-	dsn := fmt.Sprintf(
-		"user=%s password=%s dbname=%s host=%s sslmode=disable",
-		n.Config.DBUser, n.Config.DBPass, n.Config.DBName, n.Config.DBHost,
-	)
-
-	db, err := sql.Open("postgres", dsn)
-
-	if err != nil {
-		panic(err)
-	}
-
-	return db
+// DB returns the notifier's Postgres pool, opened on first use and shared
+// by every caller.
+func (n *Notifier) DB() (*sql.DB, error) {
+	n.dbOnce.Do(func() {
+		dsn := fmt.Sprintf(
+			"user=%s password=%s dbname=%s host=%s sslmode=disable",
+			n.Config.DBUser, n.Config.DBPass, n.Config.DBName, n.Config.DBHost,
+		)
+		n.db, n.dbErr = sql.Open("postgres", dsn)
+	})
+	return n.db, n.dbErr
 }
 
+// maxMessageAge is how old a highlight may be before it is discarded rather
+// than notified, e.g. after the notifier was down and nsqd replays a backlog.
+const maxMessageAge = 5 * time.Minute
+
 func (n *Notifier) Accumulate() {
-	db := n.DB()
-
-	for {
-		m := <-n.Queue
-
-		recieved := time.Unix(int64(m.Message.Time), 0)
-		if recieved.Add(5 * time.Minute).Before(time.Now()) {
-			fmt.Fprintf(os.Stderr, "Message is too old, discarding.\n")
-		}
-
-		var (
-			user         string
-			emailPref    sql.NullString
-			emailEnabled bool
-			emailAddress string
-		)
-
-		err := db.QueryRow(`
-			SELECT u.email, u.id, p.value
-				FROM connection AS c
-			JOIN "user" AS u
-				ON c."user" = u.id
-			LEFT JOIN pref AS p
-				ON p."user" = u.id
-				AND p.name = 'email'
-			WHERE c.id=$1
-		  `, m.ConnectionId,
-		).Scan(&emailAddress, &user, &emailPref)
-
-		emailEnabled = emailPref.Valid && emailPref.String == "true"
-
-		var (
-			webpushConfigs []*WebPushConfig
-			endpoint       string
-			auth           string
-			key            string
-		)
-
-		rows, err := db.Query(`
-			SELECT endpoint, auth, key
-				FROM web_push
-			WHERE "user"=$1
-			`, user,
-		)
-
-		if err != nil {
-			panic(err)
-		}
-
-		defer rows.Close()
-
-		for rows.Next() {
-			err := rows.Scan(&endpoint, &auth, &key)
-			if err != nil {
-				panic(err)
-			}
-
-			config := &WebPushConfig{
-				Endpoint: endpoint,
-				Auth:     auth,
-				Key:      key,
-				User:     user,
-			}
-			webpushConfigs = append(webpushConfigs, config)
-		}
-
-		// Skip if user has any streams open
-		if n.StreamCount(user) > 0 {
-			n.RemoveNotification(user)
-			continue
-		}
-
-		p := &NotificationPref{
-			WebPushConfigs: webpushConfigs,
-			EmailEnabled:   emailEnabled,
-			EmailAddress:   emailAddress,
-		}
-
-		n.AddNotification(user, p, m)
+	for m := range n.Queue {
+		n.accumulate(m)
 	}
+}
+
+// accumulate handles one highlight. Errors are logged and the highlight
+// dropped, so one bad message or a database outage never stops the notifier.
+func (n *Notifier) accumulate(m *LoggedMessage) {
+	received := time.Unix(int64(m.Message.Time), 0)
+	if received.Add(maxMessageAge).Before(time.Now()) {
+		log.Printf("discarding highlight %d on %s: too old (%s)", m.MessageId, m.ConnectionId, received.UTC().Format(time.RFC3339))
+		return
+	}
+
+	user, p, err := n.lookup(m.ConnectionId)
+	if err != nil {
+		log.Printf("discarding highlight %d on %s: %v", m.MessageId, m.ConnectionId, err)
+		return
+	}
+
+	// Skip if user has any streams open
+	if n.hasStreams(user) {
+		n.RemoveNotification(user)
+		return
+	}
+
+	n.AddNotification(user, p, m)
+}
+
+// lookup finds the user who owns a connection and how to notify them.
+func (n *Notifier) lookup(connection string) (string, *NotificationPref, error) {
+	db, err := n.DB()
+	if err != nil {
+		return "", nil, err
+	}
+
+	var (
+		user         string
+		emailPref    sql.NullString
+		emailAddress string
+	)
+
+	err = db.QueryRow(`
+		SELECT u.email, u.id, p.value
+			FROM connection AS c
+		JOIN "user" AS u
+			ON c."user" = u.id
+		LEFT JOIN pref AS p
+			ON p."user" = u.id
+			AND p.name = 'email'
+		WHERE c.id=$1
+	  `, connection,
+	).Scan(&emailAddress, &user, &emailPref)
+	if err == sql.ErrNoRows {
+		return "", nil, fmt.Errorf("unknown connection")
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("looking up connection: %w", err)
+	}
+
+	rows, err := db.Query(`
+		SELECT endpoint, auth, key
+			FROM web_push
+		WHERE "user"=$1
+		`, user,
+	)
+	if err != nil {
+		return "", nil, fmt.Errorf("looking up web push: %w", err)
+	}
+	defer rows.Close()
+
+	var webpushConfigs []*WebPushConfig
+	for rows.Next() {
+		c := &WebPushConfig{User: user}
+		if err := rows.Scan(&c.Endpoint, &c.Auth, &c.Key); err != nil {
+			return "", nil, fmt.Errorf("reading web push: %w", err)
+		}
+		webpushConfigs = append(webpushConfigs, c)
+	}
+	if err := rows.Err(); err != nil {
+		return "", nil, fmt.Errorf("reading web push: %w", err)
+	}
+
+	return user, &NotificationPref{
+		WebPushConfigs: webpushConfigs,
+		EmailEnabled:   emailPref.Valid && emailPref.String == "true",
+		EmailAddress:   emailAddress,
+	}, nil
 }
 
 func (n *Notifier) UserRateLimit(user string) bool {
@@ -305,7 +342,11 @@ func (n *Notifier) UserRateLimit(user string) bool {
 		limit = DefaultUserRateLimit
 	}
 
-	if ts, ok := n.Last[user]; ok {
+	n.Mu.Lock()
+	ts, ok := n.Last[user]
+	n.Mu.Unlock()
+
+	if ok {
 		now := time.Now()
 		if ts.Add(limit).After(now) {
 			return true
@@ -346,7 +387,9 @@ func (n *Notifier) Send(o *Notification) {
 	}
 
 	if o.Pref.EmailEnabled {
-		n.SendEmail(o.Messages, o.Pref.EmailAddress)
+		if err := n.SendEmail(o.Messages, o.Pref.EmailAddress); err != nil {
+			log.Printf("error sending email for %s: %v", o.User, err)
+		}
 	}
 
 	for _, c := range o.Pref.WebPushConfigs {
@@ -368,8 +411,12 @@ func (n *Notifier) Send(o *Notification) {
 }
 
 func (n *Notifier) DeleteWebPushConfig(c *WebPushConfig) {
-	db := n.DB()
-	_, err := db.Exec(`
+	db, err := n.DB()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting webpush: %s\n", err)
+		return
+	}
+	_, err = db.Exec(`
 	  DELETE FROM web_push
 		WHERE "user"=$1 AND endpoint=$2
 	`, c.User, c.Endpoint)

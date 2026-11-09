@@ -88,7 +88,7 @@ func (c *NotifierConfig) SMTPAuth(host string) smtp.Auth {
 	return smtp.PlainAuth("", c.SMTPAuthUser, c.SMTPAuthPass, host)
 }
 
-func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
+func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) error {
 	var (
 		lines   []string
 		subject string
@@ -132,11 +132,7 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) {
 		"Thank you for using relaychat.party!" +
 		"\r\n")
 
-	err := n.sendMail("notifications@relaychat.party", emailAddress, msg)
-
-	if err != nil {
-		panic(err)
-	}
+	return n.sendMail("notifications@relaychat.party", emailAddress, msg)
 }
 
 func (n *Notifier) sendMail(from string, to string, msg []byte) error {

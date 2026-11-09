@@ -45,7 +45,21 @@ func TestHandleHighlight(t *testing.T) {
 		t.Fatal("unreadable message was queued")
 	}
 
-	if err := n.handleHighlight(&nsq.Message{Body: []byte(`{"ConnectionId":"c1","MessageId":7}`)}); err != nil {
+	// Without a sender or text, email and web push can't be built.
+	for _, body := range []string{
+		`{"ConnectionId":"c1","MessageId":7}`,
+		`{"ConnectionId":"c1","Message":{"Params":["#c","hi"]}}`,
+		`{"ConnectionId":"c1","Message":{"Prefix":{"Name":"bob"},"Params":["#c"]}}`,
+	} {
+		if err := n.handleHighlight(&nsq.Message{Body: []byte(body)}); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if len(n.Queue) != 0 {
+			t.Fatalf("queued %s", body)
+		}
+	}
+
+	if err := n.handleHighlight(&nsq.Message{Body: []byte(`{"ConnectionId":"c1","MessageId":7,"Message":{"Prefix":{"Name":"bob"},"Params":["#c","hi"]}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if m := <-n.Queue; m.ConnectionId != "c1" || m.MessageId != 7 {

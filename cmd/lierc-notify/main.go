@@ -20,7 +20,6 @@ func main() {
 		DBHost:          os.Getenv("POSTGRES_HOST"),
 		DBName:          os.Getenv("POSTGRES_DB"),
 		APIStats:        os.Getenv("API_STATS"),
-		APIKey:          os.Getenv("API_KEY"),
 		APIURL:          os.Getenv("API_URL"),
 		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE"),
 		VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC"),

@@ -8,7 +8,5 @@ type LoggedMessage struct {
 	Message      *lierc.IRCMessage
 	ConnectionId string
 	MessageId    int
-	Self         bool
 	Highlight    bool
-	Direct       bool
 }

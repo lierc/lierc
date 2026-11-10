@@ -167,7 +167,6 @@ func retry(ctx context.Context, what string, f func() error) error {
 	}
 }
 
-// Stop finishes the messages in flight, then disconnects.
 // SetNotifier sets where highlights and private messages go. Call it
 // before Start; without it, notifications are off.
 func (l *Logger) SetNotifier(n Notifier) {
@@ -179,6 +178,7 @@ func (l *Logger) DB() *sql.DB {
 	return l.db
 }
 
+// Stop finishes the messages in flight, then disconnects.
 func (l *Logger) Stop() {
 	for _, consumer := range l.consumers {
 		consumer.Stop()

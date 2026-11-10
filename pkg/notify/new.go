@@ -37,7 +37,7 @@ func New(conf *NotifierConfig, db *sql.DB) *Notifier {
 // web push need both.
 func (n *Notifier) Notify(e *logger.LoggedMessage) {
 	if msg := e.Message; msg == nil || msg.Prefix == nil || len(msg.Params) < 2 {
-		log.Printf("dropping highlight %d on %s without a sender or text", e.MessageId, e.ConnectionId)
+		log.Printf("not notifying message %d on %s: no sender or text", e.MessageId, e.ConnectionId)
 		return
 	}
 
@@ -50,7 +50,7 @@ func (n *Notifier) Notify(e *logger.LoggedMessage) {
 	select {
 	case n.Queue <- m:
 	default:
-		log.Printf("dropping highlight %d on %s: notifier queue full", e.MessageId, e.ConnectionId)
+		log.Printf("not notifying message %d on %s: notifier queue full", e.MessageId, e.ConnectionId)
 	}
 }
 

@@ -29,7 +29,7 @@ func accumulateNotifier(t *testing.T, db *sql.DB) *Notifier {
 		Mu:            &sync.Mutex{},
 		Config:        &NotifierConfig{APIStats: srv.URL + "/stats", Delay: time.Hour},
 	}
-	n.dbOnce.Do(func() { n.db = db })
+	n.db = db
 	t.Cleanup(func() {
 		for _, o := range n.Notifications {
 			o.Timer.Stop()

@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	_ "github.com/lib/pq"
-	"github.com/nsqio/go-nsq"
 	"golang.org/x/time/rate"
 	"io/ioutil"
 	"log"
@@ -30,23 +30,17 @@ type Notifier struct {
 	PushHTTP *http.Client
 	pushOnce sync.Once
 
-	dbOnce sync.Once
-	db     *sql.DB
-	dbErr  error
+	// db is the logger's pool, shared.
+	db *sql.DB
 }
 
 const DefaultUserRateLimit = 10 * time.Minute
 
 type NotifierConfig struct {
-	DBUser          string
-	DBPass          string
-	DBHost          string
-	DBName          string
 	APIStats        string
 	APIURL          string
 	VAPIDPrivateKey string
 	VAPIDPublicKey  string
-	NSQDHost        string
 	SMTPHost        string
 	SMTPPort        int
 	SMTPSSL         bool
@@ -81,65 +75,6 @@ func (c *NotifierConfig) SetUserRateLimit(limit string) error {
 	c.UserRateLimit = d
 
 	return nil
-}
-
-// ListenNSQ consumes the highlight topic, blocking until nsqd is reachable.
-func (n *Notifier) ListenNSQ() error {
-	nsqd := fmt.Sprintf("%s:4150", n.Config.NSQDHost)
-
-	topic, err := nsq.NewConsumer("highlight", "notifier", consumerConfig())
-	if err != nil {
-		return err
-	}
-	topic.AddHandler(nsq.HandlerFunc(n.handleHighlight))
-
-	// go-nsq only retries connections that drop, not ones that never
-	// connected
-	retry("consuming highlight", func() error {
-		return topic.ConnectToNSQD(nsqd)
-	})
-	return nil
-}
-
-// handleHighlight queues a highlight for Accumulate. A message that is not
-// JSON is logged and dropped rather than retried forever.
-func (n *Notifier) handleHighlight(m *nsq.Message) error {
-	var logged LoggedMessage
-	if err := json.Unmarshal(m.Body, &logged); err != nil {
-		log.Printf("dropping unreadable highlight message: %v\n%s", err, m.Body)
-		return nil
-	}
-	// Email and web push need a sender and the message text.
-	if msg := logged.Message; msg == nil || msg.Prefix == nil || len(msg.Params) < 2 {
-		log.Printf("dropping highlight without a sender or text: %s", m.Body)
-		return nil
-	}
-
-	n.Queue <- &logged
-	return nil
-}
-
-// Without nsqlookupd, go-nsq waits LookupdPollInterval (60s by default)
-// between attempts to reconnect to nsqd, so after nsqd restarts no
-// notifications were sent for a minute. Retry much sooner.
-var reconnectInterval = 5 * time.Second
-
-func consumerConfig() *nsq.Config {
-	config := nsq.NewConfig()
-	config.LookupdPollInterval = reconnectInterval
-	return config
-}
-
-// retry calls f until it succeeds, reconnectInterval apart.
-func retry(what string, f func() error) {
-	for {
-		err := f()
-		if err == nil {
-			return
-		}
-		log.Printf("%s: %v (retrying in %s)", what, err, reconnectInterval)
-		time.Sleep(reconnectInterval)
-	}
 }
 
 // statsTimeout bounds one /stats request, so a hung stream server can't
@@ -232,21 +167,16 @@ func (n *Notifier) AddNotification(u string, p *NotificationPref, m *LoggedMessa
 	})
 }
 
-// DB returns the notifier's Postgres pool, opened on first use and shared
-// by every caller.
+// DB returns the pool New was given.
 func (n *Notifier) DB() (*sql.DB, error) {
-	n.dbOnce.Do(func() {
-		dsn := fmt.Sprintf(
-			"user=%s password=%s dbname=%s host=%s sslmode=disable",
-			n.Config.DBUser, n.Config.DBPass, n.Config.DBName, n.Config.DBHost,
-		)
-		n.db, n.dbErr = sql.Open("postgres", dsn)
-	})
-	return n.db, n.dbErr
+	if n.db == nil {
+		return nil, errors.New("no database")
+	}
+	return n.db, nil
 }
 
 // maxMessageAge is how old a highlight may be before it is discarded rather
-// than notified, e.g. after the notifier was down and nsqd replays a backlog.
+// than notified, e.g. after the logger was down and nsqd replays a backlog of chats.
 const maxMessageAge = 5 * time.Minute
 
 func (n *Notifier) Accumulate() {

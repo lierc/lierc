@@ -1,10 +1,10 @@
 // Package logger stores IRC messages from liercd in the log table and
-// republishes them, with their ids, for the API and the notifier.
+// republishes them, with their ids, for the API. It hands highlights and
+// private messages to the notifier, which runs in the same process.
 //
 // It reads two NSQ topics written by liercd: "chats", one message at a
 // time, and "multi", messages like NICK and QUIT that belong in several
-// channels at once. Everything it handles is published to "logged", and
-// highlights and private messages also to "highlight".
+// channels at once. Everything it handles is published to "logged".
 package logger
 
 import (
@@ -39,12 +39,19 @@ func (c *Config) nsqd() string {
 	return fmt.Sprintf("%s:4150", c.NSQDHost)
 }
 
-// LoggedMessage is what's published to the logged and highlight topics.
+// LoggedMessage is what's published to the logged topic, and handed to
+// the notifier.
 type LoggedMessage struct {
 	Message      *lierc.IRCMessage
 	ConnectionId string
 	MessageId    int
 	Highlight    bool
+}
+
+// Notifier is sent highlights and private messages once they're stored.
+// Notify must not wait: it runs on the NSQ handler that stores messages.
+type Notifier interface {
+	Notify(e *LoggedMessage)
 }
 
 type publisher interface {
@@ -60,6 +67,8 @@ type Logger struct {
 	consumers  []*nsq.Consumer
 	listener   *pq.Listener
 	highlights *Highlighters
+	// notifier is nil when notifications are off
+	notifier Notifier
 }
 
 func New(config *Config) (*Logger, error) {
@@ -159,6 +168,17 @@ func retry(ctx context.Context, what string, f func() error) error {
 }
 
 // Stop finishes the messages in flight, then disconnects.
+// SetNotifier sets where highlights and private messages go. Call it
+// before Start; without it, notifications are off.
+func (l *Logger) SetNotifier(n Notifier) {
+	l.notifier = n
+}
+
+// DB is the logger's database pool, shared with the notifier.
+func (l *Logger) DB() *sql.DB {
+	return l.db
+}
+
 func (l *Logger) Stop() {
 	for _, consumer := range l.consumers {
 		consumer.Stop()
@@ -277,9 +297,9 @@ func (l *Logger) handleConfig(n *nsq.Message) error {
 	return nil
 }
 
-// publish sends e to the API, and to the notifier if it's a highlight
-// or a private message. Failures are only logged: the message is
-// already stored, and retrying it would store it twice.
+// publish sends e to the API, and hands it to the notifier if it's a
+// highlight or a private message. Failures are only logged: the message
+// is already stored, and retrying it would store it twice.
 func (l *Logger) publish(e *LoggedMessage) {
 	body, err := json.Marshal(e)
 	if err != nil {
@@ -290,10 +310,8 @@ func (l *Logger) publish(e *LoggedMessage) {
 	if err := l.pub.Publish("logged", body); err != nil {
 		log.Printf("publishing to logged: %v", err)
 	}
-	if e.Highlight || (e.Message.Direct && !e.Message.Prefix.Self) {
-		if err := l.pub.Publish("highlight", body); err != nil {
-			log.Printf("publishing to highlight: %v", err)
-		}
+	if l.notifier != nil && (e.Highlight || (e.Message.Direct && !e.Message.Prefix.Self)) {
+		l.notifier.Notify(e)
 	}
 }
 

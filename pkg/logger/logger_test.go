@@ -75,13 +75,23 @@ func (p *fakePublisher) Publish(topic string, body []byte) error {
 	return p.err
 }
 
+// fakeNotifier records what the logger hands to the notifier.
+type fakeNotifier struct{ got []string } // "command id"
+
+func (f *fakeNotifier) Notify(e *LoggedMessage) {
+	f.got = append(f.got, e.Message.Command+" "+string(rune('0'+e.MessageId)))
+}
+
+// newTestLogger's notifier is a *fakeNotifier: notified(l) reads it.
 func newTestLogger() (*Logger, *fakeStore, *fakePublisher) {
 	store := &fakeStore{}
 	pub := &fakePublisher{}
 	h := &Highlighters{}
 	h.Replace(map[string]*regexp.Regexp{"c1": regexp.MustCompile(`(?i)\bleedo\b`)})
-	return &Logger{store: store, pub: pub, highlights: h}, store, pub
+	return &Logger{store: store, pub: pub, highlights: h, notifier: &fakeNotifier{}}, store, pub
 }
+
+func notified(l *Logger) []string { return l.notifier.(*fakeNotifier).got }
 
 func chat(t *testing.T, m *lierc.IRCMessage) *nsq.Message {
 	body, err := json.Marshal(lierc.IRCClientMessage{Id: "c1", Message: m})
@@ -112,22 +122,23 @@ func TestHandleChat(t *testing.T) {
 		stored    []string
 		privates  []string
 		published []string
+		notified  []string
 	}{
 		{"channel message",
 			&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi"}, Prefix: prefix("bob")},
-			[]string{"c1 #chan PRIVMSG"}, nil, []string{"logged PRIVMSG 1"}},
+			[]string{"c1 #chan PRIVMSG"}, nil, []string{"logged PRIVMSG 1"}, nil},
 		{"highlight",
 			&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: prefix("bob")},
-			[]string{"c1 #chan PRIVMSG highlight"}, nil, []string{"logged PRIVMSG 1", "highlight PRIVMSG 1"}},
+			[]string{"c1 #chan PRIVMSG highlight"}, nil, []string{"logged PRIVMSG 1"}, []string{"PRIVMSG 1"}},
 		{"private message",
 			&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"me", "psst"}, Prefix: prefix("bob"), Direct: true},
-			[]string{"c1 bob PRIVMSG"}, []string{"c1 bob"}, []string{"logged PRIVMSG 1", "highlight PRIVMSG 1"}},
+			[]string{"c1 bob PRIVMSG"}, []string{"c1 bob"}, []string{"logged PRIVMSG 1"}, []string{"PRIVMSG 1"}},
 		{"typing",
 			&lierc.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: prefix("bob")},
-			nil, nil, []string{"logged TAGMSG 0"}},
+			nil, nil, []string{"logged TAGMSG 0"}, nil},
 		{"nick (comes from multi)",
 			&lierc.IRCMessage{Command: "NICK", Params: []string{"robert"}, Prefix: prefix("bob")},
-			nil, nil, nil},
+			nil, nil, nil, nil},
 	}
 
 	for _, tt := range tests {
@@ -135,10 +146,33 @@ func TestHandleChat(t *testing.T) {
 		if err := l.handleChat(chat(t, tt.m)); err != nil {
 			t.Errorf("%s: handleChat returned %v", tt.name, err)
 		}
-		if !equal(store.messages, tt.stored) || !equal(store.privates, tt.privates) || !equal(pub.published, tt.published) {
-			t.Errorf("%s:\n  stored %q, want %q\n  privates %q, want %q\n  published %q, want %q",
-				tt.name, store.messages, tt.stored, store.privates, tt.privates, pub.published, tt.published)
+		if !equal(store.messages, tt.stored) || !equal(store.privates, tt.privates) || !equal(pub.published, tt.published) || !equal(notified(l), tt.notified) {
+			t.Errorf("%s:\n  stored %q, want %q\n  privates %q, want %q\n  published %q, want %q\n  notified %q, want %q",
+				tt.name, store.messages, tt.stored, store.privates, tt.privates, pub.published, tt.published, notified(l), tt.notified)
 		}
+	}
+}
+
+func TestHandleChatOwnPrivateMessage(t *testing.T) {
+	l, _, pub := newTestLogger()
+	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"bob", "psst"}, Prefix: &lierc.IRCPrefix{Name: "me", Self: true}, Direct: true}
+	if err := l.handleChat(chat(t, m)); err != nil {
+		t.Fatal(err)
+	}
+	if !equal(pub.published, []string{"logged PRIVMSG 1"}) || notified(l) != nil {
+		t.Fatalf("published %q, notified %q", pub.published, notified(l))
+	}
+}
+
+func TestHandleChatNotificationsOff(t *testing.T) {
+	l, _, pub := newTestLogger()
+	l.notifier = nil
+	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	if err := l.handleChat(chat(t, m)); err != nil {
+		t.Fatal(err)
+	}
+	if !equal(pub.published, []string{"logged PRIVMSG 1"}) {
+		t.Fatalf("published %q", pub.published)
 	}
 }
 

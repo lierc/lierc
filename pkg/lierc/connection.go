@@ -351,6 +351,7 @@ func (c *IRCClient) Status() *IRCClientStatus {
 		Message:   c.StatusMessage,
 		Connected: c.Connected,
 		Host:      c.Config.Host,
+		Nick:      c.currentNick(),
 	}
 }
 

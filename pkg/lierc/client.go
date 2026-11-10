@@ -102,6 +102,9 @@ type IRCClientStatus struct {
 	Message   string
 	Id        string
 	Host      string
+	// Nick is the nick in use (or the configured one before
+	// registration), for liercd's status line
+	Nick string
 }
 
 type IRCClientMultiMessage struct {

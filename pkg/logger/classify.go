@@ -65,7 +65,9 @@ func logType(m *lierc.IRCMessage) logKind {
 	case "NICK", "QUIT":
 		return logSkip
 
-	case "ERROR", "CONNECT", "DISCONNECT",
+	// 000 is liercd's connection status line (Connected, Reconnecting
+	// in 30s, …); CONNECT and DISCONNECT are the older form
+	case "000", "ERROR", "CONNECT", "DISCONNECT",
 		// welcome
 		ircevent.RPL_WELCOME, ircevent.RPL_YOURHOST, ircevent.RPL_CREATED,
 		ircevent.RPL_MYINFO, ircevent.RPL_ISUPPORT,

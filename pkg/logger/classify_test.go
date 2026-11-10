@@ -14,6 +14,8 @@ func TestLogType(t *testing.T) {
 		want    logKind
 	}{
 		{"privmsg", "PRIVMSG", nil, logTarget},
+		// liercd's connection status line (Connected, Reconnecting in…)
+		{"connection status", "000", nil, logStatus},
 		{"reaction", "TAGMSG", map[string]string{"+draft/reply": "m1", "+draft/react": "👍"}, logTarget},
 		{"unreaction", "TAGMSG", map[string]string{"+draft/reply": "m1", "+draft/unreact": "👍"}, logTarget},
 		{"typing", "TAGMSG", map[string]string{"+typing": "active"}, logPass},

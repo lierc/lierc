@@ -168,7 +168,8 @@ func TestManagerSinkTopics(t *testing.T) {
 	m.Multi(&lierc.IRCClientMultiMessage{Id: "c1"})
 	m.Status(&lierc.IRCClientStatus{Id: "c1", Host: "h", Connected: true, Message: "Connected"})
 	m.ConfigChange(&lierc.IRCConfigChange{Id: "c1"})
-	want := []string{"chats", "multi", "chats", "config"}
+	// a status is a 000 line on chats and its state on status
+	want := []string{"chats", "multi", "chats", "status", "config"}
 	if !reflect.DeepEqual(q.topics, want) {
 		t.Errorf("topics %q, want %q", q.topics, want)
 	}

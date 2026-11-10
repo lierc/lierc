@@ -41,12 +41,28 @@ func (m *ClientManager) Multi(e *lierc.IRCClientMultiMessage) {
 	m.queue.Enqueue("multi", e)
 }
 
-// Status queues a client's status as a CONNECT or DISCONNECT on the chats
-// topic.
+// Status queues a client's status twice: as a 000 line on the chats topic,
+// which the logger stores in the status panel's history, and as its state
+// on the status topic, which the stream server sends to the owner's tabs
+// as connection:connect or connection:disconnect.
 func (m *ClientManager) Status(s *lierc.IRCClientStatus) {
-	if event := m.ConnectEvent(s); event != nil {
-		m.queue.Enqueue("chats", event)
+	if line := m.StatusLine(s); line != nil {
+		m.queue.Enqueue("chats", line)
 	}
+	m.queue.Enqueue("status", &statusMessage{
+		Id:        s.Id,
+		Connected: s.Connected,
+		Message:   s.Message,
+		Time:      float64(time.Now().UnixNano()) / 1e9,
+	})
+}
+
+// statusMessage is a connection's state on the status topic.
+type statusMessage struct {
+	Id        string
+	Connected bool
+	Message   string
+	Time      float64
 }
 
 // ConfigChange queues a config change on the config topic, for the logger.
@@ -109,17 +125,17 @@ func (m *ClientManager) RemoveClient(c *lierc.IRCClient) {
 	delete(m.Clients, c.Id)
 }
 
-func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientMessage {
-	var event string
-	if s.Connected {
-		event = "CONNECT"
-	} else {
-		event = "DISCONNECT"
+// StatusLine is the status as a line for the status panel:
+// ":<host> 000 <nick> :<message>", with * for the nick before there is
+// one. The UI shows a numeric without its first parameter, so it reads as
+// the message.
+func (m *ClientManager) StatusLine(s *lierc.IRCClientStatus) *lierc.IRCClientMessage {
+	nick := s.Nick
+	if nick == "" {
+		nick = "*"
 	}
-
-	var line = fmt.Sprintf(":%s %s :%s", s.Host, event, s.Message)
+	var line = fmt.Sprintf(":%s 000 %s :%s", s.Host, nick, s.Message)
 	message, err := lierc.ParseIRCMessage(line)
-
 	if err != nil {
 		log.Printf("[Manager] unparseable event %q: %v", line, err)
 		return nil
@@ -133,36 +149,6 @@ func (m *ClientManager) ConnectEvent(s *lierc.IRCClientStatus) *lierc.IRCClientM
 
 func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
 	message, err := lierc.ParseIRCMessage(":" + c.Source() + " " + line)
-
-	if err != nil {
-		log.Printf("[Manager] unparseable event %q: %v", line, err)
-		return nil
-	}
-
-	return &lierc.IRCClientMessage{
-		Id:      c.Id,
-		Message: message,
-	}
-}
-
-func (m *ClientManager) CreateEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf("CREATE %s :%s", c.CurrentNick(), c.Config.Display())
-	message, err := lierc.ParseIRCMessage(line)
-
-	if err != nil {
-		log.Printf("[Manager] unparseable event %q: %v", line, err)
-		return nil
-	}
-
-	return &lierc.IRCClientMessage{
-		Id:      c.Id,
-		Message: message,
-	}
-}
-
-func (m *ClientManager) DeleteEvent(c *lierc.IRCClient) *lierc.IRCClientMessage {
-	var line = fmt.Sprintf("DELETE %s", c.Id)
-	message, err := lierc.ParseIRCMessage(line)
 
 	if err != nil {
 		log.Printf("[Manager] unparseable event %q: %v", line, err)
@@ -241,10 +227,6 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		m.AddClient(c)
 		c.Start()
 
-		if event := m.CreateEvent(c); event != nil {
-			m.Message(event)
-		}
-
 		io.WriteString(w, "ok")
 
 	case "destroy":
@@ -256,9 +238,6 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 
 		log.Printf("Destroying c")
-		if event := m.DeleteEvent(c); event != nil {
-			m.Message(event)
-		}
 		c.Destroy()
 		m.RemoveClient(c)
 

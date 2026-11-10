@@ -16,7 +16,7 @@ import (
 // why the metrics call has to come first.
 func TestMainServesMetrics(t *testing.T) {
 	dir := t.TempDir()
-	for _, cmd := range []string{"liercd", "lierc-logger", "lierc-notify", "lierc-identd"} {
+	for _, cmd := range []string{"liercd", "lierc-logger", "lierc-identd"} {
 		t.Run(cmd, func(t *testing.T) {
 			bin := filepath.Join(dir, cmd)
 			if out, err := exec.Command("go", "build", "-o", bin, "../"+cmd).CombinedOutput(); err != nil {

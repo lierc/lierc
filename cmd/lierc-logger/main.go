@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lierc/lierc/pkg/metrics"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/lierc/lierc/pkg/logger"
+	"github.com/lierc/lierc/pkg/metrics"
 )
 
 func main() {
@@ -25,6 +25,13 @@ func main() {
 	l, err := logger.New(conf)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Only a non-nil notifier is set: a nil *notify.Notifier would make a
+	// non-nil logger.Notifier.
+	if n := newNotifier(os.Getenv, l.DB()); n != nil {
+		go n.Accumulate()
+		l.SetNotifier(n)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

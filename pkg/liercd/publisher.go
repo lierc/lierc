@@ -30,7 +30,7 @@ type Publisher struct {
 // QueueSize is how many events are held while nsqd is unreachable.
 const QueueSize = 10000
 
-// Like lierc-logger and lierc-notify, retry nsqd every 5s.
+// Like lierc-logger, retry nsqd every 5s.
 const reconnectInterval = 5 * time.Second
 
 func NewPublisher(pub publisher, size int) *Publisher {

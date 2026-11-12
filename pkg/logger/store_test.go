@@ -32,7 +32,7 @@ func testStore(t *testing.T) (*pgStore, *sql.DB) {
 	for _, q := range []string{
 		"CREATE SCHEMA " + schema,
 		"SET search_path TO " + schema,
-		`CREATE TABLE connection (id varchar(24) primary key, "user" varchar(24) not null, config json not null)`,
+		`CREATE TABLE connection (id varchar(24) primary key, "user" varchar(24) not null, config jsonb not null)`,
 		`CREATE TABLE log (id serial primary key, connection varchar(24) not null, "user" varchar(24) not null,
 			channel varchar(32) not null, command varchar(16), highlight bool not null default false,
 			time timestamp not null, message jsonb not null, self bool not null default false)`,

@@ -100,7 +100,14 @@ func (c *NotifierConfig) SMTPAuth(host string) smtp.Auth {
 	return smtp.PlainAuth("", c.SMTPAuthUser, c.SMTPAuthPass, host)
 }
 
-func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) error {
+// SendEmail emails ms to emailAddress, for user.
+func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress, user string) error {
+	return n.sendMail("notifications@relaychat.party", emailAddress, n.emailMessage(ms, emailAddress, user))
+}
+
+// emailMessage is the email of ms, with user's unsubscribe link and the
+// one-click List-Unsubscribe headers (RFC 8058).
+func (n *Notifier) emailMessage(ms []*LoggedMessage, emailAddress, user string) []byte {
 	var (
 		lines   []string
 		subject string
@@ -127,10 +134,13 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) error {
 		}
 	}
 
+	token := unsubscribeToken(n.Config.UnsubscribeSecret, user)
 	msg := []byte(fmt.Sprintf("To: %s\r\n", emailAddress) +
 		fmt.Sprintf(
 			"From: Relaychat Party <notifications@relaychat.party>\n"+
 				"Subject: %s\n", subject) +
+		fmt.Sprintf("List-Unsubscribe: <%s/api/unsubscribe?token=%s>\n", n.Config.APIURL, token) +
+		"List-Unsubscribe-Post: List-Unsubscribe=One-Click\n" +
 		"MIME-Version: 1.0\n" +
 		"Content-Type: text/plain; charset=\"utf-8\"\n" +
 		"Content-Transfer-Encoding: 8bit\n" +
@@ -138,11 +148,11 @@ func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress string) error {
 		"\r\n" +
 		"You were mentioned in the following channels:\n\n" +
 		strings.Join(lines, "\n\n") + "\n\n" +
-		"This message is coming from the relaychat.party IRC client. You enabled email notifications in the client. When someone mentions your name, or uses a word that matches a highlight term you configured, you will recieve an email from us. If you would like to stop recieving these messages, please use this link to unsubscribe: https://relaychat.party/unsubscribe/\n\n" +
+		"This message is coming from the relaychat.party IRC client. You enabled email notifications in the client. When someone mentions your name, or uses a word that matches a highlight term you configured, you will recieve an email from us. If you would like to stop recieving these messages, please use this link to unsubscribe: " + n.Config.APIURL + "/unsubscribe/#" + token + "\n\n" +
 		"Thank you for using relaychat.party!" +
 		"\r\n")
 
-	return n.sendMail("notifications@relaychat.party", emailAddress, msg)
+	return msg
 }
 
 func (c *NotifierConfig) smtpTimeout() time.Duration {

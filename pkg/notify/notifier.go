@@ -37,18 +37,21 @@ type Notifier struct {
 const DefaultUserRateLimit = 10 * time.Minute
 
 type NotifierConfig struct {
-	APIStats        string
-	APIURL          string
-	VAPIDPrivateKey string
-	VAPIDPublicKey  string
-	SMTPHost        string
-	SMTPPort        int
-	SMTPSSL         bool
-	SMTPAuthUser    string
-	SMTPAuthPass    string
-	SMTPTimeout     time.Duration // per read and write; 0 means DefaultSMTPTimeout
-	Delay           time.Duration
-	UserRateLimit   time.Duration
+	APIStats string
+	APIURL   string
+	// UnsubscribeSecret signs the emails' unsubscribe links
+	// (UNSUBSCRIBE_SECRET); lierc-api checks them with the same one.
+	UnsubscribeSecret string
+	VAPIDPrivateKey   string
+	VAPIDPublicKey    string
+	SMTPHost          string
+	SMTPPort          int
+	SMTPSSL           bool
+	SMTPAuthUser      string
+	SMTPAuthPass      string
+	SMTPTimeout       time.Duration // per read and write; 0 means DefaultSMTPTimeout
+	Delay             time.Duration
+	UserRateLimit     time.Duration
 }
 
 // SetUserRateLimit sets how long to wait before notifying the same user
@@ -370,7 +373,7 @@ func (n *Notifier) Send(o *Notification) {
 
 // sendEmail emails o, logs the outcome and reports whether it was sent.
 func (n *Notifier) sendEmail(o *Notification) bool {
-	if err := n.SendEmail(o.Messages, o.Pref.EmailAddress); err != nil {
+	if err := n.SendEmail(o.Messages, o.Pref.EmailAddress, o.User); err != nil {
 		log.Printf("email to %s failed: %v", o.User, err)
 		return false
 	}

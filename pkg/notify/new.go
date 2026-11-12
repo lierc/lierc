@@ -64,6 +64,9 @@ func ConfigFromEnv(getenv func(string) string) (*NotifierConfig, error) {
 		VAPIDPublicKey:  getenv("VAPID_PUBLIC"),
 		Delay:           15 * time.Second,
 	}
+	if c.UnsubscribeSecret = getenv("UNSUBSCRIBE_SECRET"); c.UnsubscribeSecret == "" {
+		c.UnsubscribeSecret = "changeme"
+	}
 	if err := c.SetSMTPOpts(getenv("SMTP_OPTS")); err != nil {
 		return nil, fmt.Errorf("SMTP_OPTS: %w", err)
 	}

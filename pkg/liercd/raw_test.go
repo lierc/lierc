@@ -154,23 +154,39 @@ type discard struct{}
 
 func (discard) Enqueue(string, interface{}) {}
 
-// recorded is a Queue that keeps the topics it was given, in order.
-type recorded struct{ topics []string }
+// recorded is a Queue that keeps what it was given, in order.
+type recorded struct {
+	topics []string
+	items  []interface{}
+}
 
-func (r *recorded) Enqueue(topic string, _ interface{}) { r.topics = append(r.topics, topic) }
+func (r *recorded) Enqueue(topic string, item interface{}) {
+	r.topics = append(r.topics, topic)
+	r.items = append(r.items, item)
+}
 
-// The manager, as its clients' Sink, queues each kind on its topic; a
-// status goes on chats as a CONNECT or DISCONNECT.
+// The manager, as its clients' Sink, queues each kind on its topic, in
+// the order its clients publish: a NICK or QUIT, with its channels, goes
+// on chats like any other line, and a status goes on chats as a 000 line.
 func TestManagerSinkTopics(t *testing.T) {
 	q := &recorded{}
 	m := NewClientManager(q)
-	m.Message(&lierc.IRCClientMessage{Id: "c1"})
-	m.Multi(&lierc.IRCClientMultiMessage{Id: "c1"})
+	quit := &lierc.IRCClientMessage{Id: "c1", Message: &lierc.IRCMessage{Command: "QUIT"}, Channels: []string{"#a"}}
+	msg := &lierc.IRCClientMessage{Id: "c1", Message: &lierc.IRCMessage{Command: "PRIVMSG"}}
+	m.Message(quit)
+	m.Message(msg)
 	m.Status(&lierc.IRCClientStatus{Id: "c1", Host: "h", Connected: true, Message: "Connected"})
 	m.ConfigChange(&lierc.IRCConfigChange{Id: "c1"})
 	// a status is a 000 line on chats and its state on status
-	want := []string{"chats", "multi", "chats", "status", "config"}
+	want := []string{"chats", "chats", "chats", "status", "config"}
 	if !reflect.DeepEqual(q.topics, want) {
-		t.Errorf("topics %q, want %q", q.topics, want)
+		t.Fatalf("topics %q, want %q", q.topics, want)
+	}
+	if q.items[0] != quit || q.items[1] != msg {
+		t.Errorf("chats order %v, want the QUIT then the PRIVMSG", q.items[:2])
+	}
+	line, ok := q.items[2].(*lierc.IRCClientMessage)
+	if !ok || line.Message.Command != "000" || line.Channels != nil {
+		t.Errorf("status line %+v, want a 000 line without Channels", q.items[2])
 	}
 }

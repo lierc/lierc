@@ -24,10 +24,8 @@ var hostname, _ = os.Hostname()
 // since the client waits.
 type Sink interface {
 	// Message is a line from the server, or one we sent that it won't
-	// echo.
+	// echo; or a NICK or QUIT again, with the channels it affected.
 	Message(*IRCClientMessage)
-	// Multi is a NICK or QUIT, with the channels it affected.
-	Multi(*IRCClientMultiMessage)
 	// Status is the connection's state whenever it changes.
 	Status(*IRCClientStatus)
 	// ConfigChange is the fields of a connection's config that liercd
@@ -105,12 +103,6 @@ type IRCClientStatus struct {
 	// Nick is the nick in use (or the configured one before
 	// registration), for liercd's status line
 	Nick string
-}
-
-type IRCClientMultiMessage struct {
-	Id       string
-	Message  *IRCMessage
-	Channels []string
 }
 
 // IRCClientMessage is a line from a connection, published on "chats".

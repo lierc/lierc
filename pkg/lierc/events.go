@@ -14,7 +14,7 @@ import (
 // effects is what handling one message publishes besides the line itself
 // (which the raw callback publishes), sent after c is unlocked.
 type effects struct {
-	multi   *IRCClientMultiMessage // QUIT and NICK
+	multi   *IRCClientMessage // QUIT and NICK, with their channels
 	changes []*IRCConfigChange
 }
 
@@ -47,9 +47,10 @@ func eachHandler(add func(command string, h handler)) {
 	add("NICK", (*IRCClient).onNick)
 }
 
-// multiMessage is m sent to the channels it affected.
-func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientMultiMessage {
-	return &IRCClientMultiMessage{
+// multiMessage is m sent to the channels it affected. channels must be
+// non-nil, even if empty: that's what makes it a multi message.
+func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientMessage {
+	return &IRCClientMessage{
 		Message:  newIRCMessage(m),
 		Id:       c.Id,
 		Channels: channels,
@@ -486,7 +487,7 @@ func (c *IRCClient) annotate(m *IRCMessage) {
 // c must be unlocked (see Sink).
 func (c *IRCClient) publishEffects(e effects) {
 	if e.multi != nil {
-		c.sink.Multi(e.multi)
+		c.sink.Message(e.multi)
 	}
 	for _, change := range e.changes {
 		c.sink.ConfigChange(change)

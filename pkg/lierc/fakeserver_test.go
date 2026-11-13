@@ -201,7 +201,6 @@ type drained struct {
 	mu       sync.Mutex
 	statuses []*IRCClientStatus
 	events   []*IRCClientMessage
-	multi    []*IRCClientMultiMessage
 	changes  []*IRCConfigChange
 	cursor   int // statuses already matched by next
 }
@@ -221,12 +220,6 @@ func (d *drained) Message(e *IRCClientMessage) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.events = append(d.events, e)
-}
-
-func (d *drained) Multi(m *IRCClientMultiMessage) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.multi = append(d.multi, m)
 }
 
 func (d *drained) ConfigChange(c *IRCConfigChange) {

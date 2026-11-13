@@ -31,14 +31,10 @@ type ClientManager struct {
 	queue Queue
 }
 
-// Message queues a client's line on the chats topic.
+// Message queues a client's line on the chats topic; NICK and QUIT come
+// here too, with their channels.
 func (m *ClientManager) Message(e *lierc.IRCClientMessage) {
 	m.queue.Enqueue("chats", e)
-}
-
-// Multi queues a client's NICK or QUIT on the multi topic.
-func (m *ClientManager) Multi(e *lierc.IRCClientMultiMessage) {
-	m.queue.Enqueue("multi", e)
 }
 
 // Status queues a client's status twice: as a 000 line on the chats topic,

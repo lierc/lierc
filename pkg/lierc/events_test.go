@@ -1,8 +1,10 @@
 package lierc
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ergochat/irc-go/ircmsg"
@@ -147,5 +149,22 @@ func TestMessageEffects(t *testing.T) {
 	}
 	if e := handleLine(t, c, ":bob!u@h PRIVMSG #a :hi"); e.multi != nil || e.changes != nil {
 		t.Error("PRIVMSG has effects")
+	}
+}
+
+// A QUIT from a nick in none of our channels is still a multi message:
+// Channels is present but empty, so the logger publishes it unstored.
+func TestQuitNoChannelsIsMulti(t *testing.T) {
+	c := configClient()
+	e := handleLine(t, c, ":nobody!u@h QUIT :bye")
+	if e.multi == nil || e.multi.Channels == nil || len(e.multi.Channels) != 0 {
+		t.Fatalf("multi %+v, want empty non-nil Channels", e.multi)
+	}
+	body, err := json.Marshal(e.multi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"Channels":[]`) {
+		t.Errorf("marshalled %s, want \"Channels\":[]", body)
 	}
 }

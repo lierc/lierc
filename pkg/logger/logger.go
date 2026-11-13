@@ -3,8 +3,7 @@
 // private messages to the notifier, which runs in the same process.
 //
 // It reads the NSQ topic "chats", written by liercd: lines from a
-// connection, where NICK and QUIT carry the channels they belong in. It
-// also still reads "multi", where older liercd published NICK and QUIT.
+// connection, where NICK and QUIT carry the channels they belong in.
 // Everything it handles is published to "logged".
 package logger
 
@@ -96,7 +95,7 @@ func New(config *Config) (*Logger, error) {
 }
 
 // Start loads highlights, starts listening for changes to them, and
-// starts consuming the chats and multi topics. It waits for postgres
+// starts consuming the chats and config topics. It waits for postgres
 // and nsqd to be reachable, so it can start before they do.
 func (l *Logger) Start(ctx context.Context) error {
 	err := retry(ctx, "connecting to postgres", func() error {
@@ -116,7 +115,6 @@ func (l *Logger) Start(ctx context.Context) error {
 
 	for topic, handler := range map[string]nsq.HandlerFunc{
 		"chats":  l.handleChat,
-		"multi":  l.handleMulti,
 		"config": l.handleConfig,
 	} {
 		consumer, err := nsq.NewConsumer(topic, "logger", consumerConfig())
@@ -247,21 +245,6 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 		Highlight:    highlight,
 	})
 	return nil
-}
-
-// handleMulti reads the multi topic, which liercd-next published NICK
-// and QUIT on before they moved to chats.
-func (l *Logger) handleMulti(n *nsq.Message) error {
-	var m lierc.IRCClientMessage
-	if err := json.Unmarshal(n.Body, &m); err != nil {
-		log.Printf("dropping unreadable multi message: %v\n%s", err, n.Body)
-		return nil
-	}
-	if m.Message == nil {
-		log.Printf("dropping multi message without a message\n%s", n.Body)
-		return nil
-	}
-	return l.logMulti(&m)
 }
 
 // logMulti stores a line in each of its channels (NICK, QUIT), and

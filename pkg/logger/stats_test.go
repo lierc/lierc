@@ -54,15 +54,7 @@ func TestHandleCountsMessages(t *testing.T) {
 	l, _, _ := newTestLogger()
 	before := counts()
 	body, _ := json.Marshal(lierc.IRCClientMessage{Id: "c1", Message: &lierc.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: bob}, Channels: []string{"#a", "#b"}})
-	if err := l.handleMulti(&nsq.Message{Body: body}); err != nil {
-		t.Fatal(err)
-	}
-	if got := counts()["multi"]; got != before["multi"]+1 {
-		t.Errorf("multi = %d, want %d", got, before["multi"]+1)
-	}
-
-	// the same message on chats counts as multi, and as nothing else
-	before = counts()
+	// a NICK or QUIT with its channels counts as multi, and as nothing else
 	if err := l.handleChat(&nsq.Message{Body: body}); err != nil {
 		t.Fatal(err)
 	}

@@ -2,8 +2,9 @@ package logger
 
 import vm "github.com/VictoriaMetrics/metrics"
 
-// messagesTotal counts messages by how they're handled: the chats topic's
-// kinds (logKind's String) and multi for the multi topic's NICK and QUIT.
+// messagesTotal counts chats messages by how they're handled: their
+// kinds (logKind's String), and multi for NICK and QUIT with their
+// channels.
 // highlightsTotal counts messages that matched a connection's highlights.
 // Served on METRICS_LISTEN (pkg/metrics); created up front, so each
 // series exists from zero.

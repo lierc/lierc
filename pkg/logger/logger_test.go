@@ -222,32 +222,8 @@ func TestHandleChatErrors(t *testing.T) {
 	}
 }
 
-func TestHandleMulti(t *testing.T) {
-	l, store, pub := newTestLogger()
-	body, _ := json.Marshal(lierc.IRCClientMessage{
-		Id:       "c1",
-		Message:  &lierc.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: &lierc.IRCPrefix{Name: "bob"}},
-		Channels: []string{"#a", "#b"},
-	})
-
-	if err := l.handleMulti(&nsq.Message{Body: body}); err != nil {
-		t.Fatalf("handleMulti returned %v", err)
-	}
-	if !equal(store.messages, []string{"c1 #a QUIT", "c1 #b QUIT"}) {
-		t.Errorf("stored %q", store.messages)
-	}
-	if !equal(pub.published, []string{"logged QUIT 2"}) {
-		t.Errorf("published %q, want the last id once", pub.published)
-	}
-
-	store.err = errors.New("database is down")
-	if err := l.handleMulti(&nsq.Message{Body: body}); err == nil {
-		t.Errorf("database error: returned nil, want an error")
-	}
-}
-
-// NICK and QUIT arrive on chats with their channels, and are handled
-// as the multi topic's messages were.
+// NICK and QUIT arrive on chats with their channels: stored in each,
+// published once with the last id.
 func TestHandleChatMulti(t *testing.T) {
 	l, store, pub := newTestLogger()
 	body, _ := json.Marshal(lierc.IRCClientMessage{

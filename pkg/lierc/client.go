@@ -30,7 +30,7 @@ type Sink interface {
 	Status(*IRCClientStatus)
 	// ConfigChange is the fields of a connection's config that liercd
 	// changed itself (its channels as it joins and parts, a nick it was
-	// asked to change to), for the logger to save.
+	// asked to change to), for lierc-api to save.
 	ConfigChange(*IRCConfigChange)
 }
 

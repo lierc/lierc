@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/lierc/lierc/pkg/lierc"
@@ -15,8 +14,6 @@ import (
 type fakeStore struct {
 	messages []string // "connection channel command highlight"
 	privates []string // "connection nick"
-	merged   []string // "connection fields"
-	mergeErr error
 	err      error
 	nextId   int
 }
@@ -46,14 +43,6 @@ func (s *fakeStore) InsertPrivate(ctx context.Context, connection string, nick s
 		return s.err
 	}
 	s.privates = append(s.privates, connection+" "+nick)
-	return nil
-}
-
-func (s *fakeStore) MergeConfig(ctx context.Context, connection string, fields []byte) error {
-	if s.mergeErr != nil {
-		return s.mergeErr
-	}
-	s.merged = append(s.merged, connection+" "+string(fields))
 	return nil
 }
 
@@ -276,38 +265,5 @@ func TestHandleChatPlainUnchanged(t *testing.T) {
 	}
 	if !equal(store.messages, []string{"c1 #chan PRIVMSG"}) || !equal(pub.published, []string{"logged PRIVMSG 1"}) {
 		t.Errorf("stored %q, published %q", store.messages, pub.published)
-	}
-}
-
-// Config changes from liercd are merged into the saved config.
-func TestHandleConfig(t *testing.T) {
-	l, store, pub := newTestLogger()
-	for _, body := range []string{
-		`{"Id":"c1","Config":{"Channels":["#a","#B"]}}`,
-		`{"Id":"c1","Config":{"Channels":[]}}`,
-		`{"Id":"c2","Config":{"Nick":"new"}}`,
-		`{"Id":"c1","Config":{}}`, // nothing to save
-		`{"Config":{"Nick":"x"}}`, // no connection
-		`not json`,
-	} {
-		if err := l.handleConfig(&nsq.Message{Body: []byte(body)}); err != nil {
-			t.Fatalf("%s: %v", body, err)
-		}
-	}
-	want := `c1 {"Channels":["#a","#B"]},c1 {"Channels":[]},c2 {"Nick":"new"}`
-	if got := strings.Join(store.merged, ","); got != want {
-		t.Errorf("merged %q, want %q", got, want)
-	}
-	if len(store.messages) != 0 || len(pub.published) != 0 {
-		t.Errorf("config changes were logged %v or published %v", store.messages, pub.published)
-	}
-}
-
-// A failed save is retried.
-func TestHandleConfigFails(t *testing.T) {
-	l, store, _ := newTestLogger()
-	store.mergeErr = errors.New("db down")
-	if err := l.handleConfig(&nsq.Message{Body: []byte(`{"Id":"c1","Config":{"Nick":"x"}}`)}); err == nil {
-		t.Fatal("no error, so the change wouldn't be retried")
 	}
 }

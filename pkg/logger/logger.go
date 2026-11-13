@@ -95,7 +95,7 @@ func New(config *Config) (*Logger, error) {
 }
 
 // Start loads highlights, starts listening for changes to them, and
-// starts consuming the chats and config topics. It waits for postgres
+// starts consuming the chats topic. It waits for postgres
 // and nsqd to be reachable, so it can start before they do.
 func (l *Logger) Start(ctx context.Context) error {
 	err := retry(ctx, "connecting to postgres", func() error {
@@ -114,8 +114,7 @@ func (l *Logger) Start(ctx context.Context) error {
 	}
 
 	for topic, handler := range map[string]nsq.HandlerFunc{
-		"chats":  l.handleChat,
-		"config": l.handleConfig,
+		"chats": l.handleChat,
 	} {
 		consumer, err := nsq.NewConsumer(topic, "logger", consumerConfig())
 		if err != nil {
@@ -266,30 +265,6 @@ func (l *Logger) logMulti(m *lierc.IRCClientMessage) error {
 		ConnectionId: m.Id,
 		MessageId:    id,
 	})
-	return nil
-}
-
-// handleConfig saves config fields liercd changed itself, such as the
-// channel list as it joins and parts, merging them into the saved config.
-// A failure is retried: merging the same fields again is harmless.
-func (l *Logger) handleConfig(n *nsq.Message) error {
-	var c lierc.IRCConfigChange
-	if err := json.Unmarshal(n.Body, &c); err != nil {
-		log.Printf("dropping unreadable config change: %v\n%s", err, n.Body)
-		return nil
-	}
-	if c.Id == "" || len(c.Config) == 0 {
-		log.Printf("dropping empty config change\n%s", n.Body)
-		return nil
-	}
-	fields, err := json.Marshal(c.Config)
-	if err != nil {
-		log.Printf("dropping config change for %s: %v", c.Id, err)
-		return nil
-	}
-	if err := l.store.MergeConfig(context.Background(), c.Id, fields); err != nil {
-		return fmt.Errorf("saving config for %s: %w", c.Id, err)
-	}
 	return nil
 }
 

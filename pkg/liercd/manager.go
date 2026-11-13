@@ -61,7 +61,8 @@ type statusMessage struct {
 	Time      float64
 }
 
-// ConfigChange queues a config change on the config topic, for the logger.
+// ConfigChange queues a config change on the config topic, for
+// lierc-api to save.
 func (m *ClientManager) ConfigChange(c *lierc.IRCConfigChange) {
 	m.queue.Enqueue("config", c)
 }

@@ -2,9 +2,10 @@
 // republishes them, with their ids, for the API. It hands highlights and
 // private messages to the notifier, which runs in the same process.
 //
-// It reads two NSQ topics written by liercd: "chats", one message at a
-// time, and "multi", messages like NICK and QUIT that belong in several
-// channels at once. Everything it handles is published to "logged".
+// It reads the NSQ topic "chats", written by liercd: lines from a
+// connection, where NICK and QUIT carry the channels they belong in. It
+// also still reads "multi", where older liercd published NICK and QUIT.
+// Everything it handles is published to "logged".
 package logger
 
 import (
@@ -203,6 +204,9 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 		log.Printf("dropping chats message without a message\n%s", n.Body)
 		return nil
 	}
+	if m.Channels != nil {
+		return l.logMulti(&m)
+	}
 
 	ctx := context.Background()
 
@@ -245,8 +249,10 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 	return nil
 }
 
+// handleMulti reads the multi topic, which liercd-next published NICK
+// and QUIT on before they moved to chats.
 func (l *Logger) handleMulti(n *nsq.Message) error {
-	var m lierc.IRCClientMultiMessage
+	var m lierc.IRCClientMessage
 	if err := json.Unmarshal(n.Body, &m); err != nil {
 		log.Printf("dropping unreadable multi message: %v\n%s", err, n.Body)
 		return nil
@@ -255,6 +261,13 @@ func (l *Logger) handleMulti(n *nsq.Message) error {
 		log.Printf("dropping multi message without a message\n%s", n.Body)
 		return nil
 	}
+	return l.logMulti(&m)
+}
+
+// logMulti stores a line in each of its channels (NICK, QUIT), and
+// publishes it once, with the last id. With no channels, nothing is
+// stored but it's still published.
+func (l *Logger) logMulti(m *lierc.IRCClientMessage) error {
 	messagesTotal["multi"].Inc()
 
 	id, err := l.store.InsertMessages(context.Background(), m.Id, m.Message, m.Channels)

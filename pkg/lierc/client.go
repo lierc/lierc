@@ -113,9 +113,14 @@ type IRCClientMultiMessage struct {
 	Channels []string
 }
 
+// IRCClientMessage is a line from a connection, published on "chats".
+// Channels is set (non-nil, even if empty) on NICK and QUIT: the
+// channels the line belongs in. Ordinary lines leave it nil, which
+// marshals as "Channels":null.
 type IRCClientMessage struct {
-	Id      string
-	Message *IRCMessage
+	Id       string
+	Message  *IRCMessage
+	Channels []string
 }
 
 func LogLevel(env string) int64 {

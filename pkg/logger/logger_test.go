@@ -224,7 +224,7 @@ func TestHandleChatErrors(t *testing.T) {
 
 func TestHandleMulti(t *testing.T) {
 	l, store, pub := newTestLogger()
-	body, _ := json.Marshal(lierc.IRCClientMultiMessage{
+	body, _ := json.Marshal(lierc.IRCClientMessage{
 		Id:       "c1",
 		Message:  &lierc.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: &lierc.IRCPrefix{Name: "bob"}},
 		Channels: []string{"#a", "#b"},
@@ -243,6 +243,63 @@ func TestHandleMulti(t *testing.T) {
 	store.err = errors.New("database is down")
 	if err := l.handleMulti(&nsq.Message{Body: body}); err == nil {
 		t.Errorf("database error: returned nil, want an error")
+	}
+}
+
+// NICK and QUIT arrive on chats with their channels, and are handled
+// as the multi topic's messages were.
+func TestHandleChatMulti(t *testing.T) {
+	l, store, pub := newTestLogger()
+	body, _ := json.Marshal(lierc.IRCClientMessage{
+		Id:       "c1",
+		Message:  &lierc.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: &lierc.IRCPrefix{Name: "bob"}},
+		Channels: []string{"#a", "#b"},
+	})
+
+	if err := l.handleChat(&nsq.Message{Body: body}); err != nil {
+		t.Fatalf("handleChat returned %v", err)
+	}
+	if !equal(store.messages, []string{"c1 #a QUIT", "c1 #b QUIT"}) {
+		t.Errorf("stored %q", store.messages)
+	}
+	if !equal(pub.published, []string{"logged QUIT 2"}) {
+		t.Errorf("published %q, want the last id once", pub.published)
+	}
+
+	store.err = errors.New("database is down")
+	if err := l.handleChat(&nsq.Message{Body: body}); err == nil {
+		t.Errorf("database error: returned nil, want an error")
+	}
+}
+
+// A NICK that touched no channel (your own, in none) is stored nowhere
+// but still published.
+func TestHandleChatMultiNoChannels(t *testing.T) {
+	l, store, pub := newTestLogger()
+	body := []byte(`{"Id":"c1","Message":{"Command":"NICK","Params":["robert"],"Prefix":{"Name":"bob"}},"Channels":[]}`)
+
+	if err := l.handleChat(&nsq.Message{Body: body}); err != nil {
+		t.Fatalf("handleChat returned %v", err)
+	}
+	if len(store.messages) != 0 {
+		t.Errorf("stored %q, want nothing", store.messages)
+	}
+	if !equal(pub.published, []string{"logged NICK 0"}) {
+		t.Errorf("published %q", pub.published)
+	}
+}
+
+// An ordinary line, which liercd sends with "Channels":null, is handled
+// as before.
+func TestHandleChatPlainUnchanged(t *testing.T) {
+	l, store, pub := newTestLogger()
+	body := []byte(`{"Id":"c1","Message":{"Command":"PRIVMSG","Params":["#chan","hi"],"Prefix":{"Name":"bob"}},"Channels":null}`)
+
+	if err := l.handleChat(&nsq.Message{Body: body}); err != nil {
+		t.Fatalf("handleChat returned %v", err)
+	}
+	if !equal(store.messages, []string{"c1 #chan PRIVMSG"}) || !equal(pub.published, []string{"logged PRIVMSG 1"}) {
+		t.Errorf("stored %q, published %q", store.messages, pub.published)
 	}
 }
 

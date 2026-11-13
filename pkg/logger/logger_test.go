@@ -136,7 +136,7 @@ func TestHandleChat(t *testing.T) {
 		{"typing",
 			&lierc.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: prefix("bob")},
 			nil, nil, []string{"logged TAGMSG 0"}, nil},
-		{"nick (comes from multi)",
+		{"nick without channels (older liercd)",
 			&lierc.IRCMessage{Command: "NICK", Params: []string{"robert"}, Prefix: prefix("bob")},
 			nil, nil, nil, nil},
 	}

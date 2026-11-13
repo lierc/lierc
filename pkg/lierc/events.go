@@ -436,13 +436,18 @@ func (c *IRCClient) onNick(m ircmsg.Message, e *effects) {
 	e.multi = multiMessage(c, m, channels)
 }
 
-// onLine gets every line from the server, after irc-go's own handlers.
+// onLine gets every line from the server, after irc-go's own handlers,
+// and publishes it, except NICK and QUIT: onNick and onQuit publish
+// those, with the channels they affected.
 func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 	if err != nil {
 		// irc-go has logged it already
 		if c.debug > 0 {
 			c.log.Printf("unparseable line %q: %v", raw, err)
 		}
+		return
+	}
+	if m.Command == "NICK" || m.Command == "QUIT" {
 		return
 	}
 	msg := newIRCMessage(m)

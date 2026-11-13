@@ -24,7 +24,7 @@ var hostname, _ = os.Hostname()
 // since the client waits.
 type Sink interface {
 	// Message is a line from the server, or one we sent that it won't
-	// echo; or a NICK or QUIT again, with the channels it affected.
+	// echo. A NICK or QUIT comes with the channels it affected.
 	Message(*IRCClientMessage)
 	// Status is the connection's state whenever it changes.
 	Status(*IRCClientStatus)

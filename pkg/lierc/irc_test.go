@@ -599,8 +599,8 @@ func TestClientDataConcurrent(t *testing.T) {
 }
 
 // Handlers run as irc-go callbacks: a QUIT from the server updates the
-// channels and is published to Message with the channels it left, as
-// well as plainly (no channels), as every line is.
+// channels and is published to Message once, with the channels it left:
+// not again plainly, as other lines are, which the logger would skip.
 func TestQuitThroughCallbacks(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)
@@ -610,8 +610,9 @@ func TestQuitThroughCallbacks(t *testing.T) {
 	fc.register(t, "me")
 	fc.expect(t, "JOIN #a")
 	fc.send(":me!u@h JOIN #a")
-	fc.send(":s 353 me = #a :me bob")
+	fc.send(":s 353 me = #a :me bob carol")
 	fc.send(":s 366 me #a :End of NAMES")
+	fc.send(":carol!c@x NICK carl")
 	line := "@time=2026-11-03T00:00:00.000Z :bob!b@x QUIT :gone"
 	fc.send(line)
 
@@ -633,7 +634,21 @@ func TestQuitThroughCallbacks(t *testing.T) {
 	if multi.Message.Tags["time"] != "2026-11-03T00:00:00.000Z" {
 		t.Errorf("multi tags %v", multi.Message.Tags)
 	}
-	d.waitEvent(t, "QUIT")
+	// a line after it, so the QUIT's plain copy, if any, is in
+	fc.send(":bob2!b@x PRIVMSG #a :after")
+	d.waitEvent(t, "PRIVMSG")
+	d.mu.Lock()
+	count := map[string]int{}
+	for _, m := range d.events {
+		count[m.Message.Command]++
+		if (m.Message.Command == "QUIT" || m.Message.Command == "NICK") && m.Channels == nil {
+			t.Errorf("%s published without its channels", m.Message.Command)
+		}
+	}
+	d.mu.Unlock()
+	if count["QUIT"] != 1 || count["NICK"] != 1 {
+		t.Errorf("QUIT published %d times, NICK %d, want once each", count["QUIT"], count["NICK"])
+	}
 	c.RLock()
 	_, inChannel := c.Channels["#a"].Nicks["bob"]
 	c.RUnlock()

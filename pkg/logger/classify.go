@@ -16,7 +16,7 @@ type logKind int
 const (
 	// publish it live, but don't store it
 	logPass logKind = iota
-	// drop it entirely (NICK and QUIT arrive on the multi topic instead)
+	// drop it entirely (NICK and QUIT without their channels, from older liercd)
 	logSkip
 	// store it under the channel, or nick, it was sent to
 	logTarget
@@ -61,7 +61,8 @@ func logType(m *lierc.IRCMessage) logKind {
 		}
 		return logStatus
 
-	// these arrive on the multi topic instead
+	// older liercd also sent these plainly; they come with their
+	// channels too, and are logged from those (logMulti)
 	case "NICK", "QUIT":
 		return logSkip
 

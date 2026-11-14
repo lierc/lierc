@@ -208,7 +208,7 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 	ctx := context.Background()
 
 	route := routeChat(m.Message)
-	messagesTotal[route.kind.String()].Inc()
+	countCommand(m.Message.Command)
 
 	switch route.kind {
 	case logSkip:
@@ -218,6 +218,7 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 		return nil
 	}
 
+	storedTotal.Inc()
 	if route.private {
 		if err := l.store.InsertPrivate(ctx, m.Id, route.channel, m.Message.Time); err != nil {
 			return fmt.Errorf("logging private message: %w", err)
@@ -250,7 +251,8 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 // publishes it once, with the last id. With no channels, nothing is
 // stored but it's still published.
 func (l *Logger) logMulti(m *lierc.IRCClientMessage) error {
-	messagesTotal["multi"].Inc()
+	countCommand(m.Message.Command)
+	storedTotal.Inc()
 
 	id, err := l.store.InsertMessages(context.Background(), m.Id, m.Message, m.Channels)
 	if err != nil && !errors.Is(err, ErrNoConnection) {

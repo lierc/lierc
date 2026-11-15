@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"net"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -22,15 +21,10 @@ func TestMainServesMetrics(t *testing.T) {
 			if out, err := exec.Command("go", "build", "-o", bin, "../"+cmd).CombinedOutput(); err != nil {
 				t.Fatalf("build: %v\n%s", err, out)
 			}
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			addr := ln.Addr().String()
-			ln.Close()
-
+			// Port 0: the binary picks a free port and logs it, so no other
+			// process can take it between choosing and listening.
 			p := exec.Command(bin)
-			p.Env = []string{"METRICS_LISTEN=" + addr, "NSQD_HOST=127.0.0.2", "POSTGRES_HOST=127.0.0.1:1", "LISTEN=127.0.0.1:0"}
+			p.Env = []string{"METRICS_LISTEN=127.0.0.1:0", "NSQD_HOST=127.0.0.2", "POSTGRES_HOST=127.0.0.1:1", "LISTEN=127.0.0.1:0"}
 			out, err := p.StderrPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -41,26 +35,30 @@ func TestMainServesMetrics(t *testing.T) {
 			}
 			defer func() { p.Process.Kill(); p.Wait() }()
 
-			found := make(chan bool, 1)
+			const marker = "metrics on "
+			found := make(chan string, 1)
 			go func() {
 				sc := bufio.NewScanner(out)
 				for sc.Scan() {
-					if strings.Contains(sc.Text(), "metrics on "+addr) {
-						// identd logs without timestamps (journald adds
-						// them), from its first line on
-						if cmd == "lierc-identd" && sc.Text() != "metrics on "+addr {
-							t.Errorf("identd's line has a prefix: %q", sc.Text())
-						}
-						found <- true
-						return
+					line := sc.Text()
+					i := strings.Index(line, marker+"127.0.0.1:")
+					if i < 0 {
+						continue
 					}
+					// identd logs without timestamps (journald adds
+					// them), from its first line on
+					if cmd == "lierc-identd" && i != 0 {
+						t.Errorf("identd's line has a prefix: %q", line)
+					}
+					found <- line[i+len(marker):]
+					return
 				}
-				found <- false
+				found <- ""
 			}()
 			select {
-			case ok := <-found:
-				if !ok {
-					t.Fatalf("%s exited without serving metrics on %s", cmd, addr)
+			case addr := <-found:
+				if addr == "" {
+					t.Fatalf("%s exited without serving metrics", cmd)
 				}
 			case <-time.After(10 * time.Second):
 				t.Fatalf("%s: no metrics log line", cmd)

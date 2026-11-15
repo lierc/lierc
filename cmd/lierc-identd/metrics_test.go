@@ -46,6 +46,11 @@ func TestMainServesMetrics(t *testing.T) {
 				sc := bufio.NewScanner(out)
 				for sc.Scan() {
 					if strings.Contains(sc.Text(), "metrics on "+addr) {
+						// identd logs without timestamps (journald adds
+						// them), from its first line on
+						if cmd == "lierc-identd" && sc.Text() != "metrics on "+addr {
+							t.Errorf("identd's line has a prefix: %q", sc.Text())
+						}
 						found <- true
 						return
 					}

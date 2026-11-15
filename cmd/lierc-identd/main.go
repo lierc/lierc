@@ -36,8 +36,8 @@ const (
 )
 
 func main() {
-	metrics.Serve(os.Getenv("METRICS_LISTEN"))
 	log.SetFlags(0) // journald adds the time
+	metrics.Serve(os.Getenv("METRICS_LISTEN"))
 	urls := portmapURLs(os.Getenv("LIERCD_HOST"), os.Getenv("LIERCD_NEXT_HOST"))
 
 	ln, err := net.Listen("tcp", ":113")

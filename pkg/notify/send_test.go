@@ -144,7 +144,7 @@ func TestSendEmailFailsPushStillSent(t *testing.T) {
 	received(t, "good push", ok)
 	received(t, "failing push", bad)
 	logs.mustContain(t,
-		"email to u1 failed: dial tcp",
+		"email to u1 failed: dial failed: dial tcp",
 		"web push to "+badURL+" for u1 failed: 500 Internal Server Error push service says no",
 		"web push to "+okURL+" for u1: 201 Created (1 messages)",
 	)

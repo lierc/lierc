@@ -1,14 +1,16 @@
 package notify
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
-	"net/smtp"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	gomail "github.com/wneessen/go-mail"
 )
 
 const (
@@ -92,22 +94,18 @@ func (c *NotifierConfig) SMTPAddress() (string, int) {
 	return host, port
 }
 
-func (c *NotifierConfig) SMTPAuth(host string) smtp.Auth {
-	if c.SMTPAuthUser == "" {
-		return nil
-	}
-
-	return smtp.PlainAuth("", c.SMTPAuthUser, c.SMTPAuthPass, host)
-}
-
 // SendEmail emails ms to emailAddress, for user.
 func (n *Notifier) SendEmail(ms []*LoggedMessage, emailAddress, user string) error {
-	return n.sendMail("notifications@relaychat.party", emailAddress, n.emailMessage(ms, emailAddress, user))
+	m, err := n.emailMessage(ms, emailAddress, user)
+	if err != nil {
+		return err
+	}
+	return n.sendMail(m)
 }
 
 // emailMessage is the email of ms, with user's unsubscribe link and the
 // one-click List-Unsubscribe headers (RFC 8058).
-func (n *Notifier) emailMessage(ms []*LoggedMessage, emailAddress, user string) []byte {
+func (n *Notifier) emailMessage(ms []*LoggedMessage, emailAddress, user string) (*gomail.Msg, error) {
 	var (
 		lines   []string
 		subject string
@@ -135,24 +133,24 @@ func (n *Notifier) emailMessage(ms []*LoggedMessage, emailAddress, user string) 
 	}
 
 	token := unsubscribeToken(n.Config.UnsubscribeSecret, user)
-	msg := []byte(fmt.Sprintf("To: %s\r\n", emailAddress) +
-		fmt.Sprintf(
-			"From: Relaychat Party <notifications@relaychat.party>\n"+
-				"Subject: %s\n", subject) +
-		fmt.Sprintf("List-Unsubscribe: <%s/api/unsubscribe?token=%s>\n", n.Config.APIURL, token) +
-		"List-Unsubscribe-Post: List-Unsubscribe=One-Click\n" +
-		"MIME-Version: 1.0\n" +
-		"Content-Type: text/plain; charset=\"utf-8\"\n" +
-		"Content-Transfer-Encoding: 8bit\n" +
-		"X-Mailer: relaychat 0.1\n" +
-		"\r\n" +
-		"You were mentioned in the following channels:\n\n" +
-		strings.Join(lines, "\n\n") + "\n\n" +
-		"This message is coming from the relaychat.party IRC client. You enabled email notifications in the client. When someone mentions your name, or uses a word that matches a highlight term you configured, you will recieve an email from us. If you would like to stop recieving these messages, please use this link to unsubscribe: " + n.Config.APIURL + "/unsubscribe/#" + token + "\n\n" +
-		"Thank you for using relaychat.party!" +
-		"\r\n")
 
-	return msg
+	m := gomail.NewMsg()
+	if err := m.FromFormat("Relaychat Party", "notifications@relaychat.party"); err != nil {
+		return nil, err
+	}
+	if err := m.To(emailAddress); err != nil {
+		return nil, err
+	}
+	m.Subject(subject)
+	m.SetUserAgent("relaychat")
+	m.SetGenHeader("List-Unsubscribe", "<"+n.Config.APIURL+"/api/unsubscribe?token="+token+">")
+	m.SetGenHeader("List-Unsubscribe-Post", "List-Unsubscribe=One-Click")
+	m.SetBodyString(gomail.TypeTextPlain,
+		"You were mentioned in the following channels:\n\n"+
+			strings.Join(lines, "\n\n")+"\n\n"+
+			"This message is coming from the relaychat.party IRC client. You enabled email notifications in the client. When someone mentions your name, or uses a word that matches a highlight term you configured, you will recieve an email from us. If you would like to stop recieving these messages, please use this link to unsubscribe: "+n.Config.APIURL+"/unsubscribe/#"+token+"\n\n"+
+			"Thank you for using relaychat.party!\n")
+	return m, nil
 }
 
 func (c *NotifierConfig) smtpTimeout() time.Duration {
@@ -162,9 +160,60 @@ func (c *NotifierConfig) smtpTimeout() time.Duration {
 	return c.SMTPTimeout
 }
 
-// deadlineConn gives every read and write its own deadline, so a server
+// sendMail sends m: implicit TLS with SMTPSSL, otherwise STARTTLS when
+// the server offers it, and PLAIN auth when SMTPAuthUser is set (only over
+// TLS, unless the server is localhost).
+func (n *Notifier) sendMail(m *gomail.Msg) error {
+	host, port := n.Config.SMTPAddress()
+	timeout := n.Config.smtpTimeout()
+	opts := []gomail.Option{
+		gomail.WithPort(port),
+		gomail.WithTimeout(timeout),
+		gomail.WithDialContextFunc(smtpDialer(host, n.Config.SMTPSSL, timeout)),
+		gomail.WithSMTPAuth(gomail.SMTPAuthNoAuth),
+	}
+	if n.Config.SMTPSSL {
+		// smtpDialer does the TLS; this keeps go-mail from trying STARTTLS
+		opts = append(opts, gomail.WithSSL())
+	} else {
+		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSOpportunistic))
+	}
+	if n.Config.SMTPAuthUser != "" {
+		opts = append(opts, gomail.WithSMTPAuth(gomail.SMTPAuthPlain),
+			gomail.WithUsername(n.Config.SMTPAuthUser), gomail.WithPassword(n.Config.SMTPAuthPass))
+	}
+	c, err := gomail.NewClient(host, opts...)
+	if err != nil {
+		return err
+	}
+	return c.DialAndSend(m)
+}
+
+// smtpDialer connects with a deadline on every read and write, so a server
 // that stops answering fails the send, while a slow but working one
-// doesn't.
+// doesn't (go-mail's own timeout is for the whole session). With ssl it
+// does the TLS handshake, which go-mail leaves to a custom dialer.
+func smtpDialer(host string, ssl bool, timeout time.Duration) gomail.DialContextFunc {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		raw, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		conn := &deadlineConn{Conn: raw, timeout: timeout}
+		if !ssl {
+			return conn, nil
+		}
+		tc := tls.Client(conn, &tls.Config{ServerName: host})
+		if err := tc.HandshakeContext(ctx); err != nil {
+			raw.Close()
+			return nil, err
+		}
+		return tc, nil
+	}
+}
+
+// deadlineConn gives every read and write its own deadline, replacing the
+// one go-mail sets for the session.
 type deadlineConn struct {
 	net.Conn
 	timeout time.Duration
@@ -178,67 +227,4 @@ func (c *deadlineConn) Read(b []byte) (int, error) {
 func (c *deadlineConn) Write(b []byte) (int, error) {
 	c.Conn.SetDeadline(time.Now().Add(c.timeout))
 	return c.Conn.Write(b)
-}
-
-func (n *Notifier) sendMail(from string, to string, msg []byte) error {
-	host, port := n.Config.SMTPAddress()
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	auth := n.Config.SMTPAuth(host)
-	timeout := n.Config.smtpTimeout()
-
-	raw, err := (&net.Dialer{Timeout: timeout}).Dial("tcp", addr)
-	if err != nil {
-		return err
-	}
-	var conn net.Conn = &deadlineConn{Conn: raw, timeout: timeout}
-	tlsConfig := &tls.Config{ServerName: host}
-
-	if n.Config.SMTPSSL {
-		tc := tls.Client(conn, tlsConfig)
-		if err := tc.Handshake(); err != nil {
-			raw.Close()
-			return err
-		}
-		conn = tc
-	}
-
-	c, err := smtp.NewClient(conn, host)
-	if err != nil {
-		raw.Close()
-		return err
-	}
-	defer c.Close()
-
-	// as smtp.SendMail does: upgrade a plain connection when offered
-	if !n.Config.SMTPSSL {
-		if ok, _ := c.Extension("STARTTLS"); ok {
-			if err := c.StartTLS(tlsConfig); err != nil {
-				return err
-			}
-		}
-	}
-
-	if auth != nil {
-		if err := c.Auth(auth); err != nil {
-			return err
-		}
-	}
-
-	if err := c.Mail(from); err != nil {
-		return err
-	}
-	if err := c.Rcpt(to); err != nil {
-		return err
-	}
-	w, err := c.Data()
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write(msg); err != nil {
-		return err
-	}
-	if err := w.Close(); err != nil {
-		return err
-	}
-	return c.Quit()
 }

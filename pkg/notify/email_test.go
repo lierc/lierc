@@ -31,10 +31,6 @@ func TestSetSMTPOpts(t *testing.T) {
 		t.Errorf("expected me/secret, got %s/%s", c.SMTPAuthUser, c.SMTPAuthPass)
 	}
 
-	if c.SMTPAuth("smtp.example.com") == nil {
-		t.Errorf("expected auth to be set")
-	}
-
 	if err := c.SetSMTPOpts("Host,smtp.example.com,Port"); err == nil {
 		t.Errorf("expected error on odd number of values")
 	}
@@ -57,7 +53,7 @@ func TestSetSMTPOpts(t *testing.T) {
 		t.Errorf("expected smtp.example.com:25, got %s:%d", host, port)
 	}
 
-	if c.SMTPAuth("smtp.example.com") != nil {
+	if c.SMTPAuthUser != "" {
 		t.Errorf("expected no auth without AuthUser")
 	}
 }

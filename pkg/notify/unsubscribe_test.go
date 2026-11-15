@@ -1,6 +1,10 @@
 package notify
 
 import (
+	"bytes"
+	"io"
+	"mime/quotedprintable"
+	"net/mail"
 	"strings"
 	"testing"
 	"time"
@@ -15,17 +19,49 @@ func TestUnsubscribeTokenVector(t *testing.T) {
 	}
 }
 
-func emailFor(t *testing.T) (header, body string) {
+// emailFor is the notification email for one highlight, its headers parsed
+// and its body decoded.
+func emailFor(t *testing.T) (mail.Header, string) {
 	t.Helper()
 	n := &Notifier{Config: &NotifierConfig{APIURL: "https://relaychat.party", UnsubscribeSecret: "test-secret"}}
-	msg := string(n.emailMessage([]*LoggedMessage{highlight("c1", time.Now())}, "u1@example.com", "u1"))
-	// the message mixes \r\n and \n; the first empty line ends the headers
-	msg = strings.ReplaceAll(msg, "\r\n", "\n")
-	header, body, ok := strings.Cut(msg, "\n\n")
-	if !ok {
-		t.Fatalf("no blank line after the headers:\n%s", msg)
+	m, err := n.emailMessage([]*LoggedMessage{highlight("c1", time.Now())}, "u1@example.com", "u1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return header, body
+	var b bytes.Buffer
+	if _, err := m.WriteTo(&b); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.ReadMessage(&b)
+	if err != nil {
+		t.Fatalf("unreadable email: %v\n%s", err, b.String())
+	}
+	body, err := io.ReadAll(quotedprintable.NewReader(msg.Body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return msg.Header, string(body)
+}
+
+func TestEmailHeaders(t *testing.T) {
+	h, _ := emailFor(t)
+	for k, want := range map[string]string{
+		"From":                      `"Relaychat Party" <notifications@relaychat.party>`,
+		"To":                        "<u1@example.com>",
+		"Subject":                   "[#c] < bob> hi leedo",
+		"Content-Type":              "text/plain; charset=UTF-8",
+		"Content-Transfer-Encoding": "quoted-printable",
+		"X-Mailer":                  "relaychat",
+	} {
+		if got := h.Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	for _, k := range []string{"Date", "Message-Id"} {
+		if h.Get(k) == "" {
+			t.Errorf("no %s header", k)
+		}
+	}
 }
 
 func TestEmailUnsubscribeLink(t *testing.T) {
@@ -40,21 +76,12 @@ func TestEmailUnsubscribeLink(t *testing.T) {
 
 func TestEmailUnsubscribeHeaders(t *testing.T) {
 	header, body := emailFor(t)
-	lines := strings.Split(header, "\n")
-	has := func(want string) bool {
-		for _, l := range lines {
-			if l == want {
-				return true
-			}
-		}
-		return false
-	}
-	for _, want := range []string{
-		"List-Unsubscribe: <https://relaychat.party/api/unsubscribe?token=" + unsubscribeVector + ">",
-		"List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+	for k, want := range map[string]string{
+		"List-Unsubscribe":      "<https://relaychat.party/api/unsubscribe?token=" + unsubscribeVector + ">",
+		"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
 	} {
-		if !has(want) {
-			t.Errorf("header lacks %q:\n%s", want, header)
+		if got := header.Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
 		}
 	}
 	if strings.Contains(body, "List-Unsubscribe") {

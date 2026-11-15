@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	gomail "github.com/wneessen/go-mail"
 )
 
 // fakeSMTP is a minimal plain SMTP server. Each reply waits delay; if
@@ -109,6 +111,20 @@ func smtpNotifier(t *testing.T, f *fakeSMTP, timeout time.Duration) *Notifier {
 	return &Notifier{Config: &NotifierConfig{SMTPHost: host, SMTPPort: p, SMTPTimeout: timeout}}
 }
 
+func testMsg(t *testing.T) *gomail.Msg {
+	t.Helper()
+	m := gomail.NewMsg()
+	if err := m.From("from@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.To("to@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	m.Subject("hi")
+	m.SetBodyString(gomail.TypeTextPlain, "hello")
+	return m
+}
+
 func TestSMTPTimeoutOpt(t *testing.T) {
 	c := &NotifierConfig{}
 	if err := c.SetSMTPOpts(""); err != nil || c.SMTPTimeout != 10*time.Second {
@@ -133,7 +149,7 @@ func TestSMTPTimeoutOpt(t *testing.T) {
 func TestSendMailDelivers(t *testing.T) {
 	f := startSMTP(t, &fakeSMTP{})
 	n := smtpNotifier(t, f, time.Second)
-	if err := n.sendMail("from@example.com", "to@example.com", []byte("Subject: hi\r\n\r\nhello\r\n")); err != nil {
+	if err := n.sendMail(testMsg(t)); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
@@ -149,7 +165,7 @@ func TestSendMailSlowServer(t *testing.T) {
 	f := startSMTP(t, &fakeSMTP{delay: 60 * time.Millisecond})
 	n := smtpNotifier(t, f, 200*time.Millisecond)
 	start := time.Now()
-	if err := n.sendMail("from@example.com", "to@example.com", []byte("hello\r\n")); err != nil {
+	if err := n.sendMail(testMsg(t)); err != nil {
 		t.Fatal(err)
 	}
 	if d := time.Since(start); d < 200*time.Millisecond {
@@ -167,7 +183,7 @@ func TestSendMailTimesOut(t *testing.T) {
 			n := smtpNotifier(t, f, 200*time.Millisecond)
 			n.Config.SMTPSSL = ssl
 			start := time.Now()
-			err := n.sendMail("from@example.com", "to@example.com", []byte("hello\r\n"))
+			err := n.sendMail(testMsg(t))
 			if err == nil {
 				t.Errorf("%s ssl=%v: no error", name, ssl)
 			}

@@ -108,7 +108,9 @@ func (l *Logger) Start(ctx context.Context) error {
 		return err
 	}
 
-	l.reloadHighlights(ctx)
+	if err := l.loadHighlights(ctx); err != nil {
+		return err
+	}
 	if err := l.listenForHighlights(ctx); err != nil {
 		return err
 	}
@@ -147,20 +149,23 @@ func consumerConfig() *nsq.Config {
 	return config
 }
 
-// retry calls f until it succeeds, reconnectInterval apart, or until
-// ctx is done.
+// retryInterval is how long retry waits between attempts.
+var retryInterval = reconnectInterval
+
+// retry calls f until it succeeds, retryInterval apart, or until ctx is
+// done.
 func retry(ctx context.Context, what string, f func() error) error {
 	for {
 		err := f()
 		if err == nil {
 			return nil
 		}
-		log.Printf("%s: %v (retrying in %s)", what, err, reconnectInterval)
+		log.Printf("%s: %v (retrying in %s)", what, err, retryInterval)
 
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("%s: %w", what, err)
-		case <-time.After(reconnectInterval):
+		case <-time.After(retryInterval):
 		}
 	}
 }
@@ -288,11 +293,26 @@ func (l *Logger) publish(e *LoggedMessage) {
 	}
 }
 
+// loadHighlights loads the highlights at start, retrying until it can:
+// starting with none would silently stop highlights and their
+// notifications until the next NOTIFY highlights (as when lierc-api
+// hasn't finished migrating the schema yet).
+func (l *Logger) loadHighlights(ctx context.Context) error {
+	return retry(ctx, "loading highlights", func() error { return l.readHighlights(ctx) })
+}
+
+// reloadHighlights reloads the highlights after a NOTIFY highlights; on
+// failure the ones already loaded stay.
 func (l *Logger) reloadHighlights(ctx context.Context) {
+	if err := l.readHighlights(ctx); err != nil {
+		log.Printf("loading highlights: %v", err)
+	}
+}
+
+func (l *Logger) readHighlights(ctx context.Context) error {
 	configs, err := l.store.Highlights(ctx)
 	if err != nil {
-		log.Printf("loading highlights: %v", err)
-		return
+		return err
 	}
 
 	patterns, errs := compileHighlights(configs)
@@ -306,6 +326,7 @@ func (l *Logger) reloadHighlights(ctx context.Context) {
 		summary += fmt.Sprintf(", %d couldn't be read", len(errs))
 	}
 	log.Print(summary)
+	return nil
 }
 
 // listenForHighlights reloads highlights whenever the API sends

@@ -40,9 +40,9 @@ func (s *pgStore) InsertMessage(ctx context.Context, connection string, m *lierc
 
 	var id int
 	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO log ("user", connection, channel, command, message, time, self, highlight)
-		SELECT connection."user", connection.id, $2, $3, $4, to_timestamp($5), $6, $7
-		FROM connection WHERE connection.id = $1
+		`INSERT INTO logs (user_id, connection_id, channel, command, message, time, self, highlight)
+		SELECT connections.user_id, connections.id, $2, $3, $4, to_timestamp($5), $6, $7
+		FROM connections WHERE connections.id = $1
 		RETURNING id`,
 		connection,
 		strings.ToLower(channel),
@@ -79,10 +79,10 @@ func (s *pgStore) InsertMessages(ctx context.Context, connection string, m *lier
 	var id sql.NullInt64
 	err = s.db.QueryRowContext(ctx,
 		`WITH inserted AS (
-			INSERT INTO log ("user", connection, channel, command, message, time, self, highlight)
-			SELECT connection."user", connection.id, c.channel, $3, $4, to_timestamp($5), $6, false
-			FROM connection, unnest($2::text[]) WITH ORDINALITY AS c(channel, n)
-			WHERE connection.id = $1
+			INSERT INTO logs (user_id, connection_id, channel, command, message, time, self, highlight)
+			SELECT connections.user_id, connections.id, c.channel, $3, $4, to_timestamp($5), $6, false
+			FROM connections, unnest($2::text[]) WITH ORDINALITY AS c(channel, n)
+			WHERE connections.id = $1
 			ORDER BY c.n
 			RETURNING id
 		)
@@ -106,8 +106,8 @@ func (s *pgStore) InsertMessages(ctx context.Context, connection string, m *lier
 
 func (s *pgStore) InsertPrivate(ctx context.Context, connection string, nick string, time float64) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO private (connection, nick, time) VALUES ($1, $2, to_timestamp($3))
-		ON CONFLICT (connection, nick) DO UPDATE SET time = to_timestamp($3)`,
+		`INSERT INTO private_chats (connection_id, nick, time) VALUES ($1, $2, to_timestamp($3))
+		ON CONFLICT (connection_id, nick) DO UPDATE SET time = to_timestamp($3)`,
 		connection,
 		nick,
 		time,
@@ -116,7 +116,7 @@ func (s *pgStore) InsertPrivate(ctx context.Context, connection string, nick str
 }
 
 func (s *pgStore) Highlights(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, config->>'Highlight' FROM connection`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, config->>'Highlight' FROM connections`)
 	if err != nil {
 		return nil, err
 	}

@@ -109,15 +109,15 @@ func testDB(t *testing.T) *sql.DB {
 	for _, q := range []string{
 		"CREATE SCHEMA " + schema,
 		"SET search_path TO " + schema,
-		`CREATE TABLE "user" (id varchar(24) primary key, email varchar(255) not null)`,
-		`CREATE TABLE connection (id varchar(24) primary key, "user" varchar(24) not null)`,
-		`CREATE TABLE pref ("user" varchar(24) not null, name varchar(255) not null, value text not null)`,
-		`CREATE TABLE web_push (endpoint varchar(255) not null, key varchar(255) not null,
-			auth varchar(255) not null, "user" varchar(24) not null, primary key ("user", endpoint))`,
-		`INSERT INTO "user" VALUES ('u1', 'u1@example.com'), ('u2', 'u2@example.com')`,
-		`INSERT INTO connection VALUES ('c1', 'u1'), ('c2', 'u2'), ('c3', 'gone')`,
-		`INSERT INTO pref VALUES ('u1', 'email', 'true'), ('u2', 'email', 'false')`,
-		`INSERT INTO web_push VALUES ('https://push.example/a', 'ka', 'aa', 'u1'), ('https://push.example/b', 'kb', 'ab', 'u1')`,
+		`CREATE TABLE users (id varchar(24) primary key, email varchar(255) not null)`,
+		`CREATE TABLE connections (id varchar(24) primary key, user_id varchar(24) not null)`,
+		`CREATE TABLE prefs (user_id varchar(24) not null, name varchar(255) not null, value text not null)`,
+		`CREATE TABLE web_push_subscriptions (endpoint varchar(255) not null, key varchar(255) not null,
+			auth varchar(255) not null, user_id varchar(24) not null, primary key (user_id, endpoint))`,
+		`INSERT INTO users VALUES ('u1', 'u1@example.com'), ('u2', 'u2@example.com')`,
+		`INSERT INTO connections VALUES ('c1', 'u1'), ('c2', 'u2'), ('c3', 'gone')`,
+		`INSERT INTO prefs VALUES ('u1', 'email', 'true'), ('u2', 'email', 'false')`,
+		`INSERT INTO web_push_subscriptions VALUES ('https://push.example/a', 'ka', 'aa', 'u1'), ('https://push.example/b', 'kb', 'ab', 'u1')`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)

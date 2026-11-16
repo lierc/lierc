@@ -228,11 +228,11 @@ func (n *Notifier) lookup(connection string) (string, *NotificationPref, error) 
 
 	err = db.QueryRow(`
 		SELECT u.email, u.id, p.value
-			FROM connection AS c
-		JOIN "user" AS u
-			ON c."user" = u.id
-		LEFT JOIN pref AS p
-			ON p."user" = u.id
+			FROM connections AS c
+		JOIN users AS u
+			ON c.user_id = u.id
+		LEFT JOIN prefs AS p
+			ON p.user_id = u.id
 			AND p.name = 'email'
 		WHERE c.id=$1
 	  `, connection,
@@ -246,8 +246,8 @@ func (n *Notifier) lookup(connection string) (string, *NotificationPref, error) 
 
 	rows, err := db.Query(`
 		SELECT endpoint, auth, key
-			FROM web_push
-		WHERE "user"=$1
+			FROM web_push_subscriptions
+		WHERE user_id=$1
 		`, user,
 	)
 	if err != nil {
@@ -407,8 +407,8 @@ func (n *Notifier) DeleteWebPushConfig(c *WebPushConfig) {
 		return
 	}
 	_, err = db.Exec(`
-	  DELETE FROM web_push
-		WHERE "user"=$1 AND endpoint=$2
+	  DELETE FROM web_push_subscriptions
+		WHERE user_id=$1 AND endpoint=$2
 	`, c.User, c.Endpoint)
 
 	if err != nil {

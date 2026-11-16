@@ -33,10 +33,10 @@ func testStore(t *testing.T) (*pgStore, *sql.DB) {
 		"CREATE SCHEMA " + schema,
 		"SET search_path TO " + schema,
 		`CREATE TABLE connections (id varchar(24) primary key, user_id varchar(24) not null, config jsonb not null)`,
-		`CREATE TABLE logs (id serial primary key, connection_id varchar(24) not null, user_id varchar(24) not null,
+		`CREATE TABLE logs (id serial primary key, connection_id varchar(24) not null references connections on delete cascade, user_id varchar(24) not null,
 			channel varchar(32) not null, command varchar(16), highlight bool not null default false,
 			time timestamp not null, message jsonb not null, self bool not null default false)`,
-		`CREATE TABLE private_chats (connection_id varchar(24) not null, nick varchar(32) not null, time timestamp not null,
+		`CREATE TABLE private_chats (connection_id varchar(24) not null references connections on delete cascade, nick varchar(32) not null, time timestamp not null,
 			primary key (connection_id, nick))`,
 		`INSERT INTO connections VALUES ('c1', 'u1', '{"Highlight": ["leedo"]}'), ('c2', 'u2', '{}')`,
 	} {
@@ -146,5 +146,46 @@ func TestStoreHighlights(t *testing.T) {
 	}
 	if len(configs) != 1 || configs["c1"] != `["leedo"]` {
 		t.Errorf("Highlights = %v, want only c1's", configs)
+	}
+}
+
+// A private message for a connection that's gone (deleted, so its row and
+// its keys are gone) stores nothing and isn't an error.
+func TestInsertPrivateMissingConnection(t *testing.T) {
+	s, db := testStore(t)
+	if err := s.InsertPrivate(context.Background(), "nope", "bob", 1700000000); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	var n int
+	db.QueryRow(`SELECT count(*) FROM private_chats`).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d private rows, want 0", n)
+	}
+}
+
+// A key violation (the connection deleted while the insert ran) is a
+// missing connection, not an error to retry.
+func TestInsertKeyViolationIsNoConnection(t *testing.T) {
+	s, db := testStore(t)
+	ctx := context.Background()
+	for _, q := range []string{
+		`CREATE FUNCTION deleted_meanwhile() RETURNS trigger AS $$
+		  BEGIN RAISE foreign_key_violation USING MESSAGE = 'deleted meanwhile'; END $$ LANGUAGE plpgsql`,
+		`CREATE TRIGGER deleted_meanwhile BEFORE INSERT ON logs FOR EACH ROW EXECUTE FUNCTION deleted_meanwhile()`,
+		`CREATE TRIGGER deleted_meanwhile BEFORE INSERT ON private_chats FOR EACH ROW EXECUTE FUNCTION deleted_meanwhile()`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#a", "hi"}, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	if _, err := s.InsertMessage(ctx, "c1", m, "#a", false); !errors.Is(err, ErrNoConnection) {
+		t.Errorf("InsertMessage: err = %v, want ErrNoConnection", err)
+	}
+	if _, err := s.InsertMessages(ctx, "c1", m, []string{"#a"}); !errors.Is(err, ErrNoConnection) {
+		t.Errorf("InsertMessages: err = %v, want ErrNoConnection", err)
+	}
+	if err := s.InsertPrivate(ctx, "c1", "bob", 1700000000); err != nil {
+		t.Errorf("InsertPrivate: err = %v, want nil", err)
 	}
 }

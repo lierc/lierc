@@ -53,7 +53,7 @@ func (s *pgStore) InsertMessage(ctx context.Context, connection string, m *lierc
 		highlight,
 	).Scan(&id)
 
-	if err == sql.ErrNoRows {
+	if err == sql.ErrNoRows || connectionGone(err) {
 		return 0, ErrNoConnection
 	}
 	return id, err
@@ -95,6 +95,9 @@ func (s *pgStore) InsertMessages(ctx context.Context, connection string, m *lier
 		m.Prefix.Self,
 	).Scan(&id)
 
+	if connectionGone(err) {
+		return 0, ErrNoConnection
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -104,15 +107,29 @@ func (s *pgStore) InsertMessages(ctx context.Context, connection string, m *lier
 	return int(id.Int64), nil
 }
 
+// InsertPrivate records the time of a private message with nick on
+// connection; for a connection that's gone it stores nothing.
 func (s *pgStore) InsertPrivate(ctx context.Context, connection string, nick string, time float64) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO private_chats (connection_id, nick, time) VALUES ($1, $2, to_timestamp($3))
+		`INSERT INTO private_chats (connection_id, nick, time)
+		SELECT id, $2, to_timestamp($3) FROM connections WHERE id = $1
 		ON CONFLICT (connection_id, nick) DO UPDATE SET time = to_timestamp($3)`,
 		connection,
 		nick,
 		time,
 	)
+	if connectionGone(err) {
+		return nil
+	}
 	return err
+}
+
+// connectionGone reports whether err is a key violation (23503): the
+// connection was deleted while the insert ran, and with it everything of
+// its. Retrying can't help, so it's treated like a missing connection.
+func connectionGone(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23503"
 }
 
 func (s *pgStore) Highlights(ctx context.Context) (map[string]string, error) {

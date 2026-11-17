@@ -8,18 +8,24 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/lierc/lierc/pkg/envfile"
 	"github.com/lierc/lierc/pkg/logger"
 	"github.com/lierc/lierc/pkg/metrics"
 )
 
 func main() {
-	metrics.Serve(os.Getenv("METRICS_LISTEN"))
+	// Production's secrets are files, named by NAME_FILE.
+	getenv, err := envfile.WithFiles(os.Environ(), os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	metrics.Serve(getenv("METRICS_LISTEN"))
 	conf := &logger.Config{
-		DBUser:   os.Getenv("POSTGRES_USER"),
-		DBPass:   os.Getenv("POSTGRES_PASSWORD"),
-		DBHost:   os.Getenv("POSTGRES_HOST"),
-		DBName:   os.Getenv("POSTGRES_DB"),
-		NSQDHost: os.Getenv("NSQD_HOST"),
+		DBUser:   getenv("POSTGRES_USER"),
+		DBPass:   getenv("POSTGRES_PASSWORD"),
+		DBHost:   getenv("POSTGRES_HOST"),
+		DBName:   getenv("POSTGRES_DB"),
+		NSQDHost: getenv("NSQD_HOST"),
 	}
 
 	l, err := logger.New(conf)
@@ -29,7 +35,7 @@ func main() {
 
 	// Only a non-nil notifier is set: a nil *notify.Notifier would make a
 	// non-nil logger.Notifier.
-	if n := newNotifier(os.Getenv, l.DB()); n != nil {
+	if n := newNotifier(getenv, l.DB()); n != nil {
 		go n.Accumulate()
 		l.SetNotifier(n)
 	}

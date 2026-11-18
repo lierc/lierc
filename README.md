@@ -14,6 +14,6 @@ Questions or ideas? Come talk in [#relaychat](https://relaychat.party/join/?netw
 
 The HTTP API and event stream are in
 [lierc-api](https://github.com/lierc/lierc-api), the web UI in
-[lierc-minimal-ui](https://github.com/lierc/lierc-minimal-ui), and a local
+[lierc-web](https://github.com/lierc/lierc-web), and a local
 development stack in
 [lierc-docker-compose](https://github.com/lierc/lierc-docker-compose).

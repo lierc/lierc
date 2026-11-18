@@ -4,6 +4,8 @@ lierc
 The IRC side of [relaychat](https://relaychat.party/), a web IRC client that
 stays connected when you close the tab. Try it at <https://relaychat.party/>.
 
+Questions or ideas? Come talk in [#relaychat](https://relaychat.party/join/?network=relaychat&channel=relaychat).
+
 - `cmd/liercd`: keeps each user's IRC connections open, whether or not
   they're in a browser.
 - `cmd/lierc-logger`: logs IRC traffic to Postgres and sends highlight

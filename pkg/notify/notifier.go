@@ -224,10 +224,14 @@ func (n *Notifier) lookup(connection string) (string, *NotificationPref, error) 
 		user         string
 		emailPref    sql.NullString
 		emailAddress string
+		confirmed    bool
 	)
 
+	// confirmed: verified, or NULL for an account from before email
+	// confirmation. Signups can use relaychat before confirming, and an
+	// unconfirmed address may be someone else's, so it gets no email.
 	err = db.QueryRow(`
-		SELECT u.email, u.id, p.value
+		SELECT u.email, u.id, p.value, coalesce(u.verified, true)
 			FROM connections AS c
 		JOIN users AS u
 			ON c.user_id = u.id
@@ -236,7 +240,7 @@ func (n *Notifier) lookup(connection string) (string, *NotificationPref, error) 
 			AND p.name = 'email'
 		WHERE c.id=$1
 	  `, connection,
-	).Scan(&emailAddress, &user, &emailPref)
+	).Scan(&emailAddress, &user, &emailPref, &confirmed)
 	if err == sql.ErrNoRows {
 		return "", nil, fmt.Errorf("unknown connection")
 	}
@@ -269,7 +273,7 @@ func (n *Notifier) lookup(connection string) (string, *NotificationPref, error) 
 
 	return user, &NotificationPref{
 		WebPushConfigs: webpushConfigs,
-		EmailEnabled:   emailPref.Valid && emailPref.String == "true",
+		EmailEnabled:   confirmed && emailPref.Valid && emailPref.String == "true",
 		EmailAddress:   emailAddress,
 	}, nil
 }

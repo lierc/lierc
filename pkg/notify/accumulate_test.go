@@ -109,14 +109,16 @@ func testDB(t *testing.T) *sql.DB {
 	for _, q := range []string{
 		"CREATE SCHEMA " + schema,
 		"SET search_path TO " + schema,
-		`CREATE TABLE users (id varchar(24) primary key, email varchar(255) not null)`,
+		`CREATE TABLE users (id varchar(24) primary key, email varchar(255) not null, verified boolean)`,
 		`CREATE TABLE connections (id varchar(24) primary key, user_id varchar(24) not null)`,
 		`CREATE TABLE prefs (user_id varchar(24) not null, name varchar(255) not null, value text not null)`,
 		`CREATE TABLE web_push_subscriptions (endpoint varchar(255) not null, key varchar(255) not null,
 			auth varchar(255) not null, user_id varchar(24) not null, primary key (user_id, endpoint))`,
-		`INSERT INTO users VALUES ('u1', 'u1@example.com'), ('u2', 'u2@example.com')`,
-		`INSERT INTO connections VALUES ('c1', 'u1'), ('c2', 'u2'), ('c3', 'gone')`,
-		`INSERT INTO prefs VALUES ('u1', 'email', 'true'), ('u2', 'email', 'false')`,
+		// u1 confirmed; u4 from before confirmation (NULL); u5 not confirmed
+		`INSERT INTO users VALUES ('u1', 'u1@example.com', true), ('u2', 'u2@example.com', true),
+			('u4', 'u4@example.com', NULL), ('u5', 'u5@example.com', false)`,
+		`INSERT INTO connections VALUES ('c1', 'u1'), ('c2', 'u2'), ('c3', 'gone'), ('c4', 'u4'), ('c5', 'u5')`,
+		`INSERT INTO prefs VALUES ('u1', 'email', 'true'), ('u2', 'email', 'false'), ('u4', 'email', 'true'), ('u5', 'email', 'true')`,
 		`INSERT INTO web_push_subscriptions VALUES ('https://push.example/a', 'ka', 'aa', 'u1'), ('https://push.example/b', 'kb', 'ab', 'u1')`,
 	} {
 		if _, err := db.Exec(q); err != nil {
@@ -149,6 +151,15 @@ func TestLookup(t *testing.T) {
 	user, p, err = n.lookup("c2")
 	if err != nil || user != "u2" || p.EmailEnabled || len(p.WebPushConfigs) != 0 {
 		t.Errorf("c2: %s %+v %v", user, p, err)
+	}
+
+	// email goes only to a confirmed address, or one from before
+	// confirmation: an unconfirmed one may be someone else's
+	if _, p, err := n.lookup("c4"); err != nil || !p.EmailEnabled {
+		t.Errorf("c4 (verified NULL): %+v %v", p, err)
+	}
+	if _, p, err := n.lookup("c5"); err != nil || p.EmailEnabled {
+		t.Errorf("c5 (unconfirmed): email enabled %+v %v", p, err)
 	}
 
 	// No connection, or one whose user is gone.

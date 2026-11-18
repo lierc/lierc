@@ -5,18 +5,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/lierc/lierc/pkg/logger"
 )
 
 func TestNotify(t *testing.T) {
 	n := New(&NotifierConfig{}, nil)
-	bob := &lierc.IRCPrefix{Name: "bob"}
+	bob := &ircwire.IRCPrefix{Name: "bob"}
 	// Without a sender or text, email and web push can't be built.
 	for _, m := range []*logger.LoggedMessage{
 		{ConnectionId: "c1", MessageId: 7},
-		{ConnectionId: "c1", Message: &lierc.IRCMessage{Params: []string{"#c", "hi"}}},
-		{ConnectionId: "c1", Message: &lierc.IRCMessage{Prefix: bob, Params: []string{"#c"}}},
+		{ConnectionId: "c1", Message: &ircwire.IRCMessage{Params: []string{"#c", "hi"}}},
+		{ConnectionId: "c1", Message: &ircwire.IRCMessage{Prefix: bob, Params: []string{"#c"}}},
 	} {
 		n.Notify(m)
 	}
@@ -25,7 +25,7 @@ func TestNotify(t *testing.T) {
 	}
 
 	n.Notify(&logger.LoggedMessage{ConnectionId: "c1", MessageId: 7, Highlight: true,
-		Message: &lierc.IRCMessage{Prefix: bob, Params: []string{"#c", "hi"}}})
+		Message: &ircwire.IRCMessage{Prefix: bob, Params: []string{"#c", "hi"}}})
 	if m := <-n.Queue; m.ConnectionId != "c1" || m.MessageId != 7 || !m.Highlight || m.Message.Params[1] != "hi" {
 		t.Fatalf("queued %+v", m)
 	}
@@ -35,7 +35,7 @@ func TestNotifyFullQueueDrops(t *testing.T) {
 	n := New(&NotifierConfig{}, nil)
 	n.Queue = make(chan *LoggedMessage, 1)
 	m := &logger.LoggedMessage{ConnectionId: "c1",
-		Message: &lierc.IRCMessage{Prefix: &lierc.IRCPrefix{Name: "bob"}, Params: []string{"#c", "hi"}}}
+		Message: &ircwire.IRCMessage{Prefix: &ircwire.IRCPrefix{Name: "bob"}, Params: []string{"#c", "hi"}}}
 
 	done := make(chan struct{})
 	go func() { n.Notify(m); n.Notify(m); close(done) }()

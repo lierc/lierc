@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 // ErrNoConnection is returned when a message's connection isn't in the
@@ -18,10 +18,10 @@ var ErrNoConnection = errors.New("no such connection")
 // Store is where logged messages are kept.
 type Store interface {
 	// InsertMessage logs m under channel and returns its id.
-	InsertMessage(ctx context.Context, connection string, m *lierc.IRCMessage, channel string, highlight bool) (int, error)
+	InsertMessage(ctx context.Context, connection string, m *ircwire.IRCMessage, channel string, highlight bool) (int, error)
 	// InsertMessages logs m once under each of channels and returns
 	// the last id.
-	InsertMessages(ctx context.Context, connection string, m *lierc.IRCMessage, channels []string) (int, error)
+	InsertMessages(ctx context.Context, connection string, m *ircwire.IRCMessage, channels []string) (int, error)
 	// InsertPrivate records that nick sent connection a private message.
 	InsertPrivate(ctx context.Context, connection string, nick string, time float64) error
 	// Highlights returns each connection's highlight words, as JSON.
@@ -32,7 +32,7 @@ type pgStore struct {
 	db *sql.DB
 }
 
-func (s *pgStore) InsertMessage(ctx context.Context, connection string, m *lierc.IRCMessage, channel string, highlight bool) (int, error) {
+func (s *pgStore) InsertMessage(ctx context.Context, connection string, m *ircwire.IRCMessage, channel string, highlight bool) (int, error) {
 	v, err := json.Marshal(m)
 	if err != nil {
 		return 0, err
@@ -59,7 +59,7 @@ func (s *pgStore) InsertMessage(ctx context.Context, connection string, m *lierc
 	return id, err
 }
 
-func (s *pgStore) InsertMessages(ctx context.Context, connection string, m *lierc.IRCMessage, channels []string) (int, error) {
+func (s *pgStore) InsertMessages(ctx context.Context, connection string, m *ircwire.IRCMessage, channels []string) (int, error) {
 	if len(channels) == 0 {
 		return 0, nil
 	}

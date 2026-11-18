@@ -4,14 +4,14 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
-func privmsg(text string, self bool) *lierc.IRCMessage {
-	return &lierc.IRCMessage{
+func privmsg(text string, self bool) *ircwire.IRCMessage {
+	return &ircwire.IRCMessage{
 		Command: "PRIVMSG",
 		Params:  []string{"#chan", text},
-		Prefix:  &lierc.IRCPrefix{Name: "bob", Self: self},
+		Prefix:  &ircwire.IRCPrefix{Name: "bob", Self: self},
 	}
 }
 
@@ -34,14 +34,14 @@ func TestHighlightMatch(t *testing.T) {
 
 	tests := []struct {
 		connection string
-		m          *lierc.IRCMessage
+		m          *ircwire.IRCMessage
 		want       bool
 	}{
 		{"c1", privmsg("hey LeeDo, look", false), true},
 		{"c1", privmsg("leedos are great", false), false},
 		{"c1", privmsg("leedo", true), false},
-		{"c1", &lierc.IRCMessage{Command: "NOTICE", Params: []string{"#chan", "leedo"}, Prefix: &lierc.IRCPrefix{}}, false},
-		{"c1", &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan"}, Prefix: &lierc.IRCPrefix{}}, false},
+		{"c1", &ircwire.IRCMessage{Command: "NOTICE", Params: []string{"#chan", "leedo"}, Prefix: &ircwire.IRCPrefix{}}, false},
+		{"c1", &ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan"}, Prefix: &ircwire.IRCPrefix{}}, false},
 		{"c2", privmsg("leedo", false), false},
 		{"unknown", privmsg("leedo", false), false},
 	}

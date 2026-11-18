@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 // Runs against a real Postgres when LOGGER_TEST_DSN is set, e.g.
@@ -56,7 +56,7 @@ func testStore(t *testing.T) (*pgStore, *sql.DB) {
 func TestStoreInsertMessage(t *testing.T) {
 	s, db := testStore(t)
 	ctx := context.Background()
-	m := &lierc.IRCMessage{Command: "privmsg", Params: []string{"#Chan", "hi"}, Time: 1700000000.5, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	m := &ircwire.IRCMessage{Command: "privmsg", Params: []string{"#Chan", "hi"}, Time: 1700000000.5, Prefix: &ircwire.IRCPrefix{Name: "bob"}}
 
 	id, err := s.InsertMessage(ctx, "c1", m, "#Chan", true)
 	if err != nil || id == 0 {
@@ -83,7 +83,7 @@ func TestStoreInsertMessage(t *testing.T) {
 func TestStoreInsertMessages(t *testing.T) {
 	s, db := testStore(t)
 	ctx := context.Background()
-	m := &lierc.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Time: 1700000000, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	m := &ircwire.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Time: 1700000000, Prefix: &ircwire.IRCPrefix{Name: "bob"}}
 
 	id, err := s.InsertMessages(ctx, "c1", m, []string{"#B", "#a", "#c"})
 	if err != nil {
@@ -178,7 +178,7 @@ func TestInsertKeyViolationIsNoConnection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#a", "hi"}, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	m := &ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#a", "hi"}, Prefix: &ircwire.IRCPrefix{Name: "bob"}}
 	if _, err := s.InsertMessage(ctx, "c1", m, "#a", false); !errors.Is(err, ErrNoConnection) {
 		t.Errorf("InsertMessage: err = %v, want ErrNoConnection", err)
 	}

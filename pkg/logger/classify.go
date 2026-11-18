@@ -2,8 +2,7 @@ package logger
 
 import (
 	"github.com/ergochat/irc-go/ircevent"
-
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 // rplStatsConn is 250, the highest connection count, which irc-go has no
@@ -42,7 +41,7 @@ func (k logKind) String() string {
 // the channel name status messages are stored under
 const statusChannel = "status"
 
-func logType(m *lierc.IRCMessage) logKind {
+func logType(m *ircwire.IRCMessage) logKind {
 	switch m.Command {
 	case "TAGMSG":
 		// also carries typing notifications, which are only useful
@@ -88,7 +87,7 @@ func logType(m *lierc.IRCMessage) logKind {
 	return logPass
 }
 
-func isReaction(m *lierc.IRCMessage) bool {
+func isReaction(m *ircwire.IRCMessage) bool {
 	_, react := m.Tags["+draft/react"]
 	_, unreact := m.Tags["+draft/unreact"]
 	return react || unreact
@@ -104,7 +103,7 @@ type route struct {
 	private bool
 }
 
-func routeChat(m *lierc.IRCMessage) route {
+func routeChat(m *ircwire.IRCMessage) route {
 	switch kind := logType(m); kind {
 	case logTarget:
 		if m.Direct && !m.Prefix.Self {

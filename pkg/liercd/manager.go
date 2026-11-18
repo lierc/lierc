@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/lierc/lierc/pkg/lierc"
 )
 
@@ -33,7 +34,7 @@ type ClientManager struct {
 
 // Message queues a client's line on the chats topic; NICK and QUIT come
 // here too, with their channels.
-func (m *ClientManager) Message(e *lierc.IRCClientMessage) {
+func (m *ClientManager) Message(e *ircwire.IRCClientMessage) {
 	m.queue.Enqueue("chats", e)
 }
 
@@ -126,33 +127,33 @@ func (m *ClientManager) RemoveClient(c *lierc.IRCClient) {
 // ":<host> 000 <nick> :<message>", with * for the nick before there is
 // one. The UI shows a numeric without its first parameter, so it reads as
 // the message.
-func (m *ClientManager) StatusLine(s *lierc.IRCClientStatus) *lierc.IRCClientMessage {
+func (m *ClientManager) StatusLine(s *lierc.IRCClientStatus) *ircwire.IRCClientMessage {
 	nick := s.Nick
 	if nick == "" {
 		nick = "*"
 	}
 	var line = fmt.Sprintf(":%s 000 %s :%s", s.Host, nick, s.Message)
-	message, err := lierc.ParseIRCMessage(line)
+	message, err := ircwire.ParseIRCMessage(line)
 	if err != nil {
 		log.Printf("[Manager] unparseable event %q: %v", line, err)
 		return nil
 	}
 
-	return &lierc.IRCClientMessage{
+	return &ircwire.IRCClientMessage{
 		Id:      s.Id,
 		Message: message,
 	}
 }
 
-func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *lierc.IRCClientMessage {
-	message, err := lierc.ParseIRCMessage(":" + c.Source() + " " + line)
+func (m *ClientManager) PrivmsgEvent(c *lierc.IRCClient, line string) *ircwire.IRCClientMessage {
+	message, err := ircwire.ParseIRCMessage(":" + c.Source() + " " + line)
 
 	if err != nil {
 		log.Printf("[Manager] unparseable event %q: %v", line, err)
 		return nil
 	}
 
-	return &lierc.IRCClientMessage{
+	return &ircwire.IRCClientMessage{
 		Id:      c.Id,
 		Message: message,
 	}
@@ -313,7 +314,7 @@ func rawLine(body []byte) (line string, ok bool) {
 // requestedNick is the nick a raw NICK line asks for, after any tags
 // and prefix.
 func requestedNick(line string) (string, bool) {
-	m, err := lierc.ParseIRCMessage(line)
+	m, err := ircwire.ParseIRCMessage(line)
 	if err != nil || m.Command != "NICK" || len(m.Params) < 1 {
 		return "", false
 	}
@@ -328,7 +329,7 @@ const notRegistered = "Not connected yet, try again in a moment"
 // command is a raw line's command, uppercased, after any tags and
 // prefix; "" if the line doesn't parse.
 func command(line string) string {
-	m, err := lierc.ParseIRCMessage(line)
+	m, err := ircwire.ParseIRCMessage(line)
 	if err != nil {
 		return ""
 	}

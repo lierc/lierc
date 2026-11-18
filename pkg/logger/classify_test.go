@@ -3,7 +3,7 @@ package logger
 import (
 	"testing"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 func TestLogType(t *testing.T) {
@@ -34,7 +34,7 @@ func TestLogType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		m := &lierc.IRCMessage{Command: tt.command, Tags: tt.tags, Params: []string{"#chan"}}
+		m := &ircwire.IRCMessage{Command: tt.command, Tags: tt.tags, Params: []string{"#chan"}}
 		if got := logType(m); got != tt.want {
 			t.Errorf("%s: logType = %v, want %v", tt.name, got, tt.want)
 		}
@@ -42,18 +42,18 @@ func TestLogType(t *testing.T) {
 }
 
 func TestRouteChat(t *testing.T) {
-	msg := func(command, from string, direct, self bool, params ...string) *lierc.IRCMessage {
-		return &lierc.IRCMessage{
+	msg := func(command, from string, direct, self bool, params ...string) *ircwire.IRCMessage {
+		return &ircwire.IRCMessage{
 			Command: command,
 			Params:  params,
 			Direct:  direct,
-			Prefix:  &lierc.IRCPrefix{Name: from, Self: self},
+			Prefix:  &ircwire.IRCPrefix{Name: from, Self: self},
 		}
 	}
 
 	tests := []struct {
 		name string
-		m    *lierc.IRCMessage
+		m    *ircwire.IRCMessage
 		want route
 	}{
 		{"channel message", msg("PRIVMSG", "bob", false, false, "#Chan", "hi"), route{logTarget, "#Chan", false}},
@@ -65,7 +65,7 @@ func TestRouteChat(t *testing.T) {
 		{"error numeric", msg("433", "server", false, false, "me", "nick", "in use"), route{logStatus, "status", false}},
 		{"join", msg("JOIN", "bob", false, false, "#chan"), route{logTarget, "#chan", false}},
 		{"nick", msg("NICK", "bob", false, false, "robert"), route{kind: logSkip}},
-		{"typing", &lierc.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: &lierc.IRCPrefix{Name: "bob"}}, route{kind: logPass}},
+		{"typing", &ircwire.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: &ircwire.IRCPrefix{Name: "bob"}}, route{kind: logPass}},
 		{"unknown", msg("PONG", "server", false, false, "x"), route{kind: logPass}},
 	}
 

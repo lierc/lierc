@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 // pushTimeout bounds one web push request, from connecting to reading the
@@ -54,11 +54,11 @@ func newPushClient(blocked func(netip.Addr) bool) *http.Client {
 }
 
 // pushClient is the client SendWebPush uses: n.PushHTTP if set (tests),
-// otherwise one that refuses lierc.BlockedIP addresses.
+// otherwise one that refuses ircwire.BlockedIP addresses.
 func (n *Notifier) pushClient() *http.Client {
 	n.pushOnce.Do(func() {
 		if n.PushHTTP == nil {
-			n.PushHTTP = newPushClient(lierc.BlockedIP)
+			n.PushHTTP = newPushClient(ircwire.BlockedIP)
 		}
 	})
 	return n.PushHTTP

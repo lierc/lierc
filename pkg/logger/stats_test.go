@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	vm "github.com/VictoriaMetrics/metrics"
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/nsqio/go-nsq"
 )
 
@@ -31,20 +31,20 @@ func TestCommandLabel(t *testing.T) {
 // count as stored; highlights count separately. A NICK or QUIT with its
 // channels counts once, under its command, and as stored.
 func TestHandleCountsMessages(t *testing.T) {
-	bob := &lierc.IRCPrefix{Name: "bob"}
+	bob := &ircwire.IRCPrefix{Name: "bob"}
 	for _, tt := range []struct {
-		m          *lierc.IRCMessage
+		m          *ircwire.IRCMessage
 		label      string
 		stored     uint64
 		highlights uint64
 	}{
-		{&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi"}, Prefix: bob}, "PRIVMSG", 1, 0},
-		{&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: bob}, "PRIVMSG", 1, 1},
-		{&lierc.IRCMessage{Command: "NOTICE", Params: []string{"*", "server notice"}, Prefix: bob}, "NOTICE", 1, 0},
-		{&lierc.IRCMessage{Command: "372", Params: []string{"me", "motd line"}, Prefix: bob}, "3xx", 1, 0},
-		{&lierc.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: bob}, "TAGMSG", 0, 0},
-		{&lierc.IRCMessage{Command: "NICK", Params: []string{"robert"}, Prefix: bob}, "NICK", 0, 0},
-		{&lierc.IRCMessage{Command: "MADEUP", Params: []string{"x"}, Prefix: bob}, "other", 0, 0},
+		{&ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi"}, Prefix: bob}, "PRIVMSG", 1, 0},
+		{&ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: bob}, "PRIVMSG", 1, 1},
+		{&ircwire.IRCMessage{Command: "NOTICE", Params: []string{"*", "server notice"}, Prefix: bob}, "NOTICE", 1, 0},
+		{&ircwire.IRCMessage{Command: "372", Params: []string{"me", "motd line"}, Prefix: bob}, "3xx", 1, 0},
+		{&ircwire.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: bob}, "TAGMSG", 0, 0},
+		{&ircwire.IRCMessage{Command: "NICK", Params: []string{"robert"}, Prefix: bob}, "NICK", 0, 0},
+		{&ircwire.IRCMessage{Command: "MADEUP", Params: []string{"x"}, Prefix: bob}, "other", 0, 0},
 	} {
 		l, _, _ := newTestLogger()
 		cmd, stored, hl := commandCount(tt.label), storedTotal.Get(), highlightsTotal.Get()
@@ -64,7 +64,7 @@ func TestHandleCountsMessages(t *testing.T) {
 
 	l, _, _ := newTestLogger()
 	cmd, stored := commandCount("QUIT"), storedTotal.Get()
-	body, _ := json.Marshal(lierc.IRCClientMessage{Id: "c1", Message: &lierc.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: bob}, Channels: []string{"#a", "#b"}})
+	body, _ := json.Marshal(ircwire.IRCClientMessage{Id: "c1", Message: &ircwire.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: bob}, Channels: []string{"#a", "#b"}})
 	if err := l.handleChat(&nsq.Message{Body: body}); err != nil {
 		t.Fatal(err)
 	}

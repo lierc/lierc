@@ -9,12 +9,13 @@ import (
 
 	"github.com/ergochat/irc-go/ircevent"
 	"github.com/ergochat/irc-go/ircmsg"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 // effects is what handling one message publishes besides the line itself
 // (which the raw callback publishes), sent after c is unlocked.
 type effects struct {
-	multi   *IRCClientMessage // QUIT and NICK, with their channels
+	multi   *ircwire.IRCClientMessage // QUIT and NICK, with their channels
 	changes []*IRCConfigChange
 }
 
@@ -49,9 +50,9 @@ func eachHandler(add func(command string, h handler)) {
 
 // multiMessage is m sent to the channels it affected. channels must be
 // non-nil, even if empty: that's what makes it a multi message.
-func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *IRCClientMessage {
-	return &IRCClientMessage{
-		Message:  newIRCMessage(m),
+func multiMessage(c *IRCClient, m ircmsg.Message, channels []string) *ircwire.IRCClientMessage {
+	return &ircwire.IRCClientMessage{
+		Message:  ircwire.NewIRCMessage(m),
 		Id:       c.Id,
 		Channels: channels,
 	}
@@ -450,11 +451,11 @@ func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 	if m.Command == "NICK" || m.Command == "QUIT" {
 		return
 	}
-	msg := newIRCMessage(m)
+	msg := ircwire.NewIRCMessage(m)
 	c.Lock()
 	c.annotate(msg)
 	c.Unlock()
-	c.sink.Message(&IRCClientMessage{Id: c.Id, Message: msg})
+	c.sink.Message(&ircwire.IRCClientMessage{Id: c.Id, Message: msg})
 }
 
 // run runs h for m with c locked, and returns what h wants published;
@@ -475,9 +476,9 @@ func (c *IRCClient) run(conn *ircevent.Connection, h handler, m ircmsg.Message) 
 
 // annotate marks a PRIVMSG or NOTICE sent to our nick as Direct, and a
 // PRIVMSG from us as Self. c is locked.
-func (c *IRCClient) annotate(m *IRCMessage) {
+func (c *IRCClient) annotate(m *ircwire.IRCMessage) {
 	if m.Prefix == nil {
-		m.Prefix = &IRCPrefix{}
+		m.Prefix = &ircwire.IRCPrefix{}
 	}
 	if (m.Command == "PRIVMSG" || m.Command == "NOTICE") && len(m.Params) > 0 {
 		nick := c.currentNick()

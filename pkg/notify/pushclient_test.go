@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 // The default push client refuses private addresses, by IP or by a name
@@ -70,7 +70,7 @@ func TestPushClientBlockedList(t *testing.T) {
 		"142.250.80.10": false, "2607:f8b0:4006::200a": false,
 		"127.0.0.1": true, "10.1.2.3": true, "::ffff:127.0.0.1": true, "169.254.169.254": true,
 	} {
-		if got := lierc.BlockedIP(netip.MustParseAddr(addr)); got != want {
+		if got := ircwire.BlockedIP(netip.MustParseAddr(addr)); got != want {
 			t.Errorf("%s blocked = %v", addr, got)
 		}
 	}

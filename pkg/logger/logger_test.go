@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/nsqio/go-nsq"
 )
 
@@ -18,7 +18,7 @@ type fakeStore struct {
 	nextId   int
 }
 
-func (s *fakeStore) InsertMessage(ctx context.Context, connection string, m *lierc.IRCMessage, channel string, highlight bool) (int, error) {
+func (s *fakeStore) InsertMessage(ctx context.Context, connection string, m *ircwire.IRCMessage, channel string, highlight bool) (int, error) {
 	if s.err != nil {
 		return 0, s.err
 	}
@@ -27,7 +27,7 @@ func (s *fakeStore) InsertMessage(ctx context.Context, connection string, m *lie
 	return s.nextId, nil
 }
 
-func (s *fakeStore) InsertMessages(ctx context.Context, connection string, m *lierc.IRCMessage, channels []string) (int, error) {
+func (s *fakeStore) InsertMessages(ctx context.Context, connection string, m *ircwire.IRCMessage, channels []string) (int, error) {
 	if s.err != nil {
 		return 0, s.err
 	}
@@ -82,8 +82,8 @@ func newTestLogger() (*Logger, *fakeStore, *fakePublisher) {
 
 func notified(l *Logger) []string { return l.notifier.(*fakeNotifier).got }
 
-func chat(t *testing.T, m *lierc.IRCMessage) *nsq.Message {
-	body, err := json.Marshal(lierc.IRCClientMessage{Id: "c1", Message: m})
+func chat(t *testing.T, m *ircwire.IRCMessage) *nsq.Message {
+	body, err := json.Marshal(ircwire.IRCClientMessage{Id: "c1", Message: m})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,30 +103,30 @@ func equal(a, b []string) bool {
 }
 
 func TestHandleChat(t *testing.T) {
-	prefix := func(name string) *lierc.IRCPrefix { return &lierc.IRCPrefix{Name: name} }
+	prefix := func(name string) *ircwire.IRCPrefix { return &ircwire.IRCPrefix{Name: name} }
 
 	tests := []struct {
 		name      string
-		m         *lierc.IRCMessage
+		m         *ircwire.IRCMessage
 		stored    []string
 		privates  []string
 		published []string
 		notified  []string
 	}{
 		{"channel message",
-			&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi"}, Prefix: prefix("bob")},
+			&ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi"}, Prefix: prefix("bob")},
 			[]string{"c1 #chan PRIVMSG"}, nil, []string{"logged PRIVMSG 1"}, nil},
 		{"highlight",
-			&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: prefix("bob")},
+			&ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: prefix("bob")},
 			[]string{"c1 #chan PRIVMSG highlight"}, nil, []string{"logged PRIVMSG 1"}, []string{"PRIVMSG 1"}},
 		{"private message",
-			&lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"me", "psst"}, Prefix: prefix("bob"), Direct: true},
+			&ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"me", "psst"}, Prefix: prefix("bob"), Direct: true},
 			[]string{"c1 bob PRIVMSG"}, []string{"c1 bob"}, []string{"logged PRIVMSG 1"}, []string{"PRIVMSG 1"}},
 		{"typing",
-			&lierc.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: prefix("bob")},
+			&ircwire.IRCMessage{Command: "TAGMSG", Params: []string{"#chan"}, Tags: map[string]string{"+typing": "active"}, Prefix: prefix("bob")},
 			nil, nil, []string{"logged TAGMSG 0"}, nil},
 		{"nick without channels (older liercd)",
-			&lierc.IRCMessage{Command: "NICK", Params: []string{"robert"}, Prefix: prefix("bob")},
+			&ircwire.IRCMessage{Command: "NICK", Params: []string{"robert"}, Prefix: prefix("bob")},
 			nil, nil, nil, nil},
 	}
 
@@ -144,7 +144,7 @@ func TestHandleChat(t *testing.T) {
 
 func TestHandleChatOwnPrivateMessage(t *testing.T) {
 	l, _, pub := newTestLogger()
-	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"bob", "psst"}, Prefix: &lierc.IRCPrefix{Name: "me", Self: true}, Direct: true}
+	m := &ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"bob", "psst"}, Prefix: &ircwire.IRCPrefix{Name: "me", Self: true}, Direct: true}
 	if err := l.handleChat(chat(t, m)); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestHandleChatOwnPrivateMessage(t *testing.T) {
 func TestHandleChatNotificationsOff(t *testing.T) {
 	l, _, pub := newTestLogger()
 	l.notifier = nil
-	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	m := &ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi leedo"}, Prefix: &ircwire.IRCPrefix{Name: "bob"}}
 	if err := l.handleChat(chat(t, m)); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestHandleChatNotificationsOff(t *testing.T) {
 }
 
 func TestHandleChatErrors(t *testing.T) {
-	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi"}, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	m := &ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#chan", "hi"}, Prefix: &ircwire.IRCPrefix{Name: "bob"}}
 
 	// unreadable messages are dropped, not retried
 	l, store, pub := newTestLogger()
@@ -215,9 +215,9 @@ func TestHandleChatErrors(t *testing.T) {
 // published once with the last id.
 func TestHandleChatMulti(t *testing.T) {
 	l, store, pub := newTestLogger()
-	body, _ := json.Marshal(lierc.IRCClientMessage{
+	body, _ := json.Marshal(ircwire.IRCClientMessage{
 		Id:       "c1",
-		Message:  &lierc.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: &lierc.IRCPrefix{Name: "bob"}},
+		Message:  &ircwire.IRCMessage{Command: "QUIT", Params: []string{"bye"}, Prefix: &ircwire.IRCPrefix{Name: "bob"}},
 		Channels: []string{"#a", "#b"},
 	})
 

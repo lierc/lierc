@@ -1,11 +1,9 @@
 package notify
 
-import (
-	"github.com/lierc/lierc/pkg/lierc"
-)
+import "github.com/lierc/lierc/pkg/ircwire"
 
 type LoggedMessage struct {
-	Message      *lierc.IRCMessage
+	Message      *ircwire.IRCMessage
 	ConnectionId string
 	MessageId    int
 	Highlight    bool

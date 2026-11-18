@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 	"golang.org/x/time/rate"
 )
 
@@ -42,8 +42,8 @@ func highlight(connection string, at time.Time) *LoggedMessage {
 	return &LoggedMessage{
 		ConnectionId: connection,
 		MessageId:    1,
-		Message: &lierc.IRCMessage{
-			Prefix:  &lierc.IRCPrefix{Name: "bob"},
+		Message: &ircwire.IRCMessage{
+			Prefix:  &ircwire.IRCPrefix{Name: "bob"},
 			Command: "PRIVMSG",
 			Params:  []string{"#c", "hi leedo"},
 			Time:    float64(at.Unix()),

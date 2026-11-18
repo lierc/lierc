@@ -1,4 +1,8 @@
-package lierc
+// Package ircwire is liercd's wire format, the IRC messages it publishes
+// to NSQ, and the addresses it refuses to connect to: what liercd and the
+// programs reading its messages (lierc-api's logger) share. It needs only
+// irc-go's ircmsg, so it builds without lierc's irc-go fork.
+package ircwire
 
 import (
 	"time"
@@ -22,8 +26,8 @@ type IRCMessage struct {
 	Direct  bool
 }
 
-// newIRCMessage builds an IRCMessage from a parsed line.
-func newIRCMessage(m ircmsg.Message) *IRCMessage {
+// NewIRCMessage builds an IRCMessage from a parsed line.
+func NewIRCMessage(m ircmsg.Message) *IRCMessage {
 	prefix := &IRCPrefix{}
 	if m.Source != "" {
 		// ParseNUH only fails on an empty source
@@ -45,5 +49,15 @@ func ParseIRCMessage(line string) (*IRCMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newIRCMessage(m), nil
+	return NewIRCMessage(m), nil
+}
+
+// IRCClientMessage is a line from a connection, published on "chats".
+// Channels is set (non-nil, even if empty) on NICK and QUIT: the
+// channels the line belongs in. Ordinary lines leave it nil, which
+// marshals as "Channels":null.
+type IRCClientMessage struct {
+	Id       string
+	Message  *IRCMessage
+	Channels []string
 }

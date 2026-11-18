@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 var nonBlank = regexp.MustCompile(`\S`)
@@ -35,7 +35,7 @@ func (h *Highlighters) pattern(connection string) *regexp.Regexp {
 
 // Match reports whether m is someone else's PRIVMSG that contains one
 // of the connection's highlight words.
-func (h *Highlighters) Match(connection string, m *lierc.IRCMessage) bool {
+func (h *Highlighters) Match(connection string, m *ircwire.IRCMessage) bool {
 	if m.Prefix.Self || m.Command != "PRIVMSG" || len(m.Params) < 2 {
 		return false
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/lierc/lierc/pkg/lierc"
 )
 
@@ -48,7 +49,7 @@ func TestStatusPublishesLineAndState(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("enqueued %d, want 4: %+v", len(got), got)
 	}
-	line, ok := got[0].v.(*lierc.IRCClientMessage)
+	line, ok := got[0].v.(*ircwire.IRCClientMessage)
 	if got[0].topic != "chats" || !ok || line.Id != "c1" || line.Message.Command != "000" ||
 		line.Message.Prefix.Name != "irc.x" || strings.Join(line.Message.Params, "|") != "me|Reconnecting in 30s" {
 		t.Errorf("first: %s %+v", got[0].topic, got[0].v)
@@ -59,7 +60,7 @@ func TestStatusPublishesLineAndState(t *testing.T) {
 		t.Errorf("second: %s %+v", got[1].topic, got[1].v)
 	}
 	// before registration there's no nick yet: *
-	if line := got[2].v.(*lierc.IRCClientMessage); strings.Join(line.Message.Params, "|") != "*|Connected" {
+	if line := got[2].v.(*ircwire.IRCClientMessage); strings.Join(line.Message.Params, "|") != "*|Connected" {
 		t.Errorf("no-nick line params %q", line.Message.Params)
 	}
 	if st := got[3].v.(*statusMessage); got[3].topic != "status" || !st.Connected {
@@ -108,7 +109,7 @@ func TestCreateDestroyPublishNoConnectionEvents(t *testing.T) {
 		if e.topic == "status" {
 			sawStatus = true
 		}
-		if msg, ok := e.v.(*lierc.IRCClientMessage); ok {
+		if msg, ok := e.v.(*ircwire.IRCClientMessage); ok {
 			switch msg.Message.Command {
 			case "CREATE", "DELETE", "CONNECT", "DISCONNECT":
 				t.Errorf("published %s on %s", msg.Message.Command, e.topic)

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/nsqio/go-nsq"
 )
 
@@ -42,7 +42,7 @@ func (c *Config) nsqd() string {
 // LoggedMessage is what's published to the logged topic, and handed to
 // the notifier.
 type LoggedMessage struct {
-	Message      *lierc.IRCMessage
+	Message      *ircwire.IRCMessage
 	ConnectionId string
 	MessageId    int
 	Highlight    bool
@@ -197,7 +197,7 @@ func (l *Logger) Stop() {
 }
 
 func (l *Logger) handleChat(n *nsq.Message) error {
-	var m lierc.IRCClientMessage
+	var m ircwire.IRCClientMessage
 	if err := json.Unmarshal(n.Body, &m); err != nil {
 		log.Printf("dropping unreadable chats message: %v\n%s", err, n.Body)
 		return nil
@@ -255,7 +255,7 @@ func (l *Logger) handleChat(n *nsq.Message) error {
 // logMulti stores a line in each of its channels (NICK, QUIT), and
 // publishes it once, with the last id. With no channels, nothing is
 // stored but it's still published.
-func (l *Logger) logMulti(m *lierc.IRCClientMessage) error {
+func (l *Logger) logMulti(m *ircwire.IRCClientMessage) error {
 	countCommand(m.Message.Command)
 	storedTotal.Inc()
 

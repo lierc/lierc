@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ergochat/irc-go/ircmsg"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 func copyChannels(in map[string]*IRCChannel) map[string]*IRCChannel {
@@ -89,8 +90,8 @@ func TestPrefixesFrom(t *testing.T) {
 
 func TestMessageEffects(t *testing.T) {
 	// parse runs line through annotate, as the raw callback does
-	parse := func(c *IRCClient, line string) *IRCMessage {
-		m, err := ParseIRCMessage(line)
+	parse := func(c *IRCClient, line string) *ircwire.IRCMessage {
+		m, err := ircwire.ParseIRCMessage(line)
 		if err != nil {
 			t.Fatal(err)
 		}

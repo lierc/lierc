@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 func TestBackoff(t *testing.T) {
@@ -616,7 +618,7 @@ func TestQuitThroughCallbacks(t *testing.T) {
 	line := "@time=2026-11-03T00:00:00.000Z :bob!b@x QUIT :gone"
 	fc.send(line)
 
-	var multi *IRCClientMessage
+	var multi *ircwire.IRCClientMessage
 	eventually(t, "QUIT with channels on Message", func() bool {
 		d.mu.Lock()
 		defer d.mu.Unlock()

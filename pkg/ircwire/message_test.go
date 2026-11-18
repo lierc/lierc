@@ -1,4 +1,4 @@
-package lierc
+package ircwire
 
 import (
 	"encoding/json"

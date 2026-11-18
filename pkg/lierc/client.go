@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ergochat/irc-go/ircevent"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 var hostname, _ = os.Hostname()
@@ -25,7 +26,7 @@ var hostname, _ = os.Hostname()
 type Sink interface {
 	// Message is a line from the server, or one we sent that it won't
 	// echo. A NICK or QUIT comes with the channels it affected.
-	Message(*IRCClientMessage)
+	Message(*ircwire.IRCClientMessage)
 	// Status is the connection's state whenever it changes.
 	Status(*IRCClientStatus)
 	// ConfigChange is the fields of a connection's config that liercd
@@ -103,16 +104,6 @@ type IRCClientStatus struct {
 	// Nick is the nick in use (or the configured one before
 	// registration), for liercd's status line
 	Nick string
-}
-
-// IRCClientMessage is a line from a connection, published on "chats".
-// Channels is set (non-nil, even if empty) on NICK and QUIT: the
-// channels the line belongs in. Ordinary lines leave it nil, which
-// marshals as "Channels":null.
-type IRCClientMessage struct {
-	Id       string
-	Message  *IRCMessage
-	Channels []string
 }
 
 func LogLevel(env string) int64 {

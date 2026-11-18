@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/lierc/lierc/pkg/lierc"
 )
 
@@ -171,8 +172,8 @@ func (r *recorded) Enqueue(topic string, item interface{}) {
 func TestManagerSinkTopics(t *testing.T) {
 	q := &recorded{}
 	m := NewClientManager(q)
-	quit := &lierc.IRCClientMessage{Id: "c1", Message: &lierc.IRCMessage{Command: "QUIT"}, Channels: []string{"#a"}}
-	msg := &lierc.IRCClientMessage{Id: "c1", Message: &lierc.IRCMessage{Command: "PRIVMSG"}}
+	quit := &ircwire.IRCClientMessage{Id: "c1", Message: &ircwire.IRCMessage{Command: "QUIT"}, Channels: []string{"#a"}}
+	msg := &ircwire.IRCClientMessage{Id: "c1", Message: &ircwire.IRCMessage{Command: "PRIVMSG"}}
 	m.Message(quit)
 	m.Message(msg)
 	m.Status(&lierc.IRCClientStatus{Id: "c1", Host: "h", Connected: true, Message: "Connected"})
@@ -185,7 +186,7 @@ func TestManagerSinkTopics(t *testing.T) {
 	if q.items[0] != quit || q.items[1] != msg {
 		t.Errorf("chats order %v, want the QUIT then the PRIVMSG", q.items[:2])
 	}
-	line, ok := q.items[2].(*lierc.IRCClientMessage)
+	line, ok := q.items[2].(*ircwire.IRCClientMessage)
 	if !ok || line.Message.Command != "000" || line.Channels != nil {
 		t.Errorf("status line %+v, want a 000 line without Channels", q.items[2])
 	}

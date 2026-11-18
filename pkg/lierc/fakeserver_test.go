@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 func TestMain(m *testing.M) {
@@ -200,7 +202,7 @@ func (fc *fakeConn) close() {
 type drained struct {
 	mu       sync.Mutex
 	statuses []*IRCClientStatus
-	events   []*IRCClientMessage
+	events   []*ircwire.IRCClientMessage
 	changes  []*IRCConfigChange
 	cursor   int // statuses already matched by next
 }
@@ -216,7 +218,7 @@ func (d *drained) Status(s *IRCClientStatus) {
 	d.statuses = append(d.statuses, s)
 }
 
-func (d *drained) Message(e *IRCClientMessage) {
+func (d *drained) Message(e *ircwire.IRCClientMessage) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.events = append(d.events, e)

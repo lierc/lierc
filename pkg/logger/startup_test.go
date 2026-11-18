@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lierc/lierc/pkg/lierc"
+	"github.com/lierc/lierc/pkg/ircwire"
 )
 
 // highlightStore fails Highlights a number of times before it works, like
@@ -43,7 +43,7 @@ func TestLoadHighlightsRetriesAtStart(t *testing.T) {
 	if store.calls != 3 {
 		t.Errorf("Highlights called %d times, want 3", store.calls)
 	}
-	m := &lierc.IRCMessage{Command: "PRIVMSG", Params: []string{"#a", "hi leedo"}, Prefix: &lierc.IRCPrefix{Name: "bob"}}
+	m := &ircwire.IRCMessage{Command: "PRIVMSG", Params: []string{"#a", "hi leedo"}, Prefix: &ircwire.IRCPrefix{Name: "bob"}}
 	if !l.highlights.Match("c1", m) {
 		t.Error("c1's highlight wasn't loaded")
 	}

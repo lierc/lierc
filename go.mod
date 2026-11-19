@@ -3,23 +3,17 @@ module github.com/lierc/lierc
 go 1.27
 
 require (
-	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/VictoriaMetrics/metrics v1.44.1
 	github.com/ergochat/irc-go v0.7.0
-	github.com/lib/pq v1.12.3
 	github.com/nsqio/go-nsq v1.1.0
-	github.com/wneessen/go-mail v0.8.2
 	golang.org/x/time v0.16.0
 )
 
 require (
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/valyala/fastrand v1.1.0 // indirect
 	github.com/valyala/histogram v1.2.0 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 )
 
 replace github.com/ergochat/irc-go => github.com/lierc/irc-go v0.7.1-lierc.1

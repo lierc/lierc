@@ -1,0 +1,1 @@
+{"Id":"ExampleConnection00000","Message":{"Prefix":{"Name":"bob","User":"~bob","Server":"cloak.example.org","Self":false},"Tags":{},"Command":"QUIT","Time":1795115560.5,"Params":["Quit: bye"],"Direct":false},"Channels":["#example","#other"]}

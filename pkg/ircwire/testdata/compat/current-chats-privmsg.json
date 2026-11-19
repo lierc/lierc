@@ -1,0 +1,1 @@
+{"Id":"ExampleConnection00000","Message":{"Prefix":{"Name":"bob","User":"~bob","Server":"cloak.example.org","Self":false},"Tags":{"msgid":"cccccccccccccccccccccccccc","time":"2026-11-19T18:19:37.296Z"},"Command":"PRIVMSG","Time":1795115554.1080873,"Params":["#example","hello there"],"Direct":false},"Channels":null}

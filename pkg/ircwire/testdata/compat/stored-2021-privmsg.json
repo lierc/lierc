@@ -1,0 +1,1 @@
+{"Raw": ":alice!alice@host.example.org PRIVMSG #example :hello there", "Time": 1641068784.2090907, "Direct": false, "Params": ["#example", "hello there"], "Prefix": {"Name": "alice", "Self": true, "User": "alice", "Server": "host.example.org"}, "Command": "PRIVMSG"}

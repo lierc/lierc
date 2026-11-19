@@ -2,6 +2,12 @@
 // to NSQ, and the addresses it refuses to connect to: what liercd and the
 // programs reading its messages (lierc-api's logger) share. It needs only
 // irc-go's ircmsg, so it builds without lierc's irc-go fork.
+//
+// lierc-api pins this package by pseudo-version in its go.mod, not by a
+// release, so a change here reaches its logger only when lierc-api bumps
+// that pin (go get github.com/lierc/lierc@<commit>). Since liercd and the
+// logger deploy separately, a change to the wire format must work with
+// the other side still on the older version.
 package ircwire
 
 import (

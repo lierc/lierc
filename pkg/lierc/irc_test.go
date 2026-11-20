@@ -660,8 +660,8 @@ func TestQuitThroughCallbacks(t *testing.T) {
 }
 
 // Our JOIN, PART and a KICK of us, arriving through irc-go's callbacks,
-// publish the whole new channel list on ConfigChanges; joining a channel
-// already in the config publishes nothing.
+// publish the whole new channel list as the Config of that line; joining a
+// channel already in the config changes nothing.
 func TestChannelChangesPublished(t *testing.T) {
 	fastRetries(t)
 	srv := newFakeServer(t)
@@ -676,19 +676,19 @@ func TestChannelChangesPublished(t *testing.T) {
 	fc.send(":op!o@h KICK #b me :out")
 
 	want := []string{
-		`{"Id":"c1","Config":{"Channels":["#a","#b"]}}`,
-		`{"Id":"c1","Config":{"Channels":["#b"]}}`,
-		`{"Id":"c1","Config":{"Channels":[]}}`,
+		`JOIN {"Channels":["#a","#b"]}`,
+		`PART {"Channels":["#b"]}`,
+		`KICK {"Channels":[]}`,
 	}
-	eventually(t, "3 config changes", func() bool { return len(d.changed()) >= len(want) })
-	changes := d.changed()
+	eventually(t, "3 config changes", func() bool { return len(d.changedLines()) >= len(want) })
+	changes := d.changedLines()
 	if len(changes) != len(want) {
 		t.Fatalf("%d config changes, want %d", len(changes), len(want))
 	}
-	for i, change := range changes {
-		b, _ := json.Marshal(change)
-		if string(b) != want[i] {
-			t.Errorf("change %d: %s, want %s", i, b, want[i])
+	for i, line := range changes {
+		b, _ := json.Marshal(line.Config)
+		if got := line.Message.Command + " " + string(b); got != want[i] || line.Id != "c1" {
+			t.Errorf("change %d: %s on %s, want %s", i, got, line.Id, want[i])
 		}
 	}
 	c.RLock()
@@ -738,11 +738,27 @@ func fastKeepAlive(t *testing.T) {
 	t.Cleanup(func() { ircTimeout, ircKeepAlive = oldTimeout, oldKeepAlive })
 }
 
-// changed is the config changes published so far.
-func (d *drained) changed() []*IRCConfigChange {
+// changedLines is the lines published so far that carry a config change.
+func (d *drained) changedLines() []*ircwire.IRCClientMessage {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return append([]*IRCConfigChange{}, d.changes...)
+	var lines []*ircwire.IRCClientMessage
+	for _, e := range d.events {
+		if e.Config != nil {
+			lines = append(lines, e)
+		}
+	}
+	return lines
+}
+
+// changed is the config changes published so far, each as its connection
+// and fields.
+func (d *drained) changed() []*IRCConfigChange {
+	var changes []*IRCConfigChange
+	for _, e := range d.changedLines() {
+		changes = append(changes, &IRCConfigChange{Id: e.Id, Config: e.Config})
+	}
+	return changes
 }
 
 // registerFallback registers as me_, the server refusing "me" with 433.
@@ -782,9 +798,14 @@ func TestRequestedNickNotReverted(t *testing.T) {
 	fc.send(":me!u@h NICK new")
 	fc.expectNo(t, "NICK me", 600*time.Millisecond)
 
-	changes := d.changed()
-	if got, want := changed(t, changes), `{"Id":"c1","Config":{"Nick":"new"}}`; got != want {
-		t.Errorf("published %s, want %s", got, want)
+	// the change rides on the NICK itself, published with its channels
+	changes := d.changedLines()
+	if len(changes) != 1 {
+		t.Fatalf("%d lines with config changes, want 1", len(changes))
+	}
+	b, _ := json.Marshal(changes[0].Config)
+	if got := changes[0].Message.Command + " " + string(b); got != `NICK {"Nick":"new"}` || changes[0].Channels == nil {
+		t.Errorf("published %s (channels %v), want NICK {\"Nick\":\"new\"} with its channels", got, changes[0].Channels)
 	}
 }
 

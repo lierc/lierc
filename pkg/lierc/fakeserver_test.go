@@ -203,7 +203,6 @@ type drained struct {
 	mu       sync.Mutex
 	statuses []*IRCClientStatus
 	events   []*ircwire.IRCClientMessage
-	changes  []*IRCConfigChange
 	cursor   int // statuses already matched by next
 }
 
@@ -222,12 +221,6 @@ func (d *drained) Message(e *ircwire.IRCClientMessage) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.events = append(d.events, e)
-}
-
-func (d *drained) ConfigChange(c *IRCConfigChange) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.changes = append(d.changes, c)
 }
 
 // next waits for the next status after the last one matched that satisfies

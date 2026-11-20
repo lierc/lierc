@@ -168,7 +168,8 @@ func (r *recorded) Enqueue(topic string, item interface{}) {
 
 // The manager, as its clients' Sink, queues each kind on its topic, in
 // the order its clients publish: a NICK or QUIT, with its channels, goes
-// on chats like any other line, and a status goes on chats as a 000 line.
+// on chats like any other line, and a status goes on chats as a 000 line,
+// its state as the Status: nothing goes on the status or config topics.
 func TestManagerSinkTopics(t *testing.T) {
 	q := &recorded{}
 	m := NewClientManager(q)
@@ -177,9 +178,7 @@ func TestManagerSinkTopics(t *testing.T) {
 	m.Message(quit)
 	m.Message(msg)
 	m.Status(&lierc.IRCClientStatus{Id: "c1", Host: "h", Connected: true, Message: "Connected"})
-	m.ConfigChange(&lierc.IRCConfigChange{Id: "c1"})
-	// a status is a 000 line on chats and its state on status
-	want := []string{"chats", "chats", "chats", "status", "config"}
+	want := []string{"chats", "chats", "chats"}
 	if !reflect.DeepEqual(q.topics, want) {
 		t.Fatalf("topics %q, want %q", q.topics, want)
 	}
@@ -187,7 +186,7 @@ func TestManagerSinkTopics(t *testing.T) {
 		t.Errorf("chats order %v, want the QUIT then the PRIVMSG", q.items[:2])
 	}
 	line, ok := q.items[2].(*ircwire.IRCClientMessage)
-	if !ok || line.Message.Command != "000" || line.Channels != nil {
-		t.Errorf("status line %+v, want a 000 line without Channels", q.items[2])
+	if !ok || line.Message.Command != "000" || line.Channels != nil || line.Status == nil || !line.Status.Connected {
+		t.Errorf("status line %+v, want a 000 line, Connected, without Channels", q.items[2])
 	}
 }

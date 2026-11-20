@@ -454,8 +454,10 @@ func (c *IRCClient) onLine(raw string, m ircmsg.Message, err error) {
 	msg := ircwire.NewIRCMessage(m)
 	c.Lock()
 	c.annotate(msg)
+	config := c.pendingConfig
+	c.pendingConfig = nil
 	c.Unlock()
-	c.sink.Message(&ircwire.IRCClientMessage{Id: c.Id, Message: msg})
+	c.sink.Message(&ircwire.IRCClientMessage{Id: c.Id, Message: msg, Config: config})
 }
 
 // run runs h for m with c locked, and returns what h wants published;
@@ -489,13 +491,41 @@ func (c *IRCClient) annotate(m *ircwire.IRCMessage) {
 	}
 }
 
-// publishEffects publishes the multi message and config changes e holds.
-// c must be unlocked (see Sink).
+// publishEffects publishes the multi message e holds, with e's config
+// changes as its Config (our own NICK). Changes without a multi message
+// (our JOIN, PART, a KICK of us) go on the line itself, which onLine
+// publishes next. c must be unlocked (see Sink).
 func (c *IRCClient) publishEffects(e effects) {
+	config := mergeChanges(e.changes)
 	if e.multi != nil {
+		e.multi.Config = config
 		c.sink.Message(e.multi)
+		return
 	}
-	for _, change := range e.changes {
-		c.sink.ConfigChange(change)
+	if config != nil {
+		c.Lock()
+		if c.pendingConfig == nil {
+			c.pendingConfig = config
+		} else {
+			for k, v := range config {
+				c.pendingConfig[k] = v
+			}
+		}
+		c.Unlock()
 	}
+}
+
+// mergeChanges is changes' fields in one map, a later change's value of a
+// field winning; nil when there are none.
+func mergeChanges(changes []*IRCConfigChange) map[string]any {
+	if len(changes) == 0 {
+		return nil
+	}
+	config := map[string]any{}
+	for _, change := range changes {
+		for k, v := range change.Config {
+			config[k] = v
+		}
+	}
+	return config
 }

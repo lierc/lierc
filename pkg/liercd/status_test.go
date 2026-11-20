@@ -37,34 +37,29 @@ func (q *queueRec) all() []enqueued {
 	return append([]enqueued{}, q.got...)
 }
 
-// A status change is a 000 line on chats, for the status panel's
-// history, then the state on the status topic, for the stream server.
-func TestStatusPublishesLineAndState(t *testing.T) {
+// A status change is one 000 line on chats, for the status panel's
+// history, with the state as its Status, for the stream server.
+func TestStatusPublishesLineWithState(t *testing.T) {
 	q := &queueRec{}
 	m := NewClientManager(q)
 	m.Status(&lierc.IRCClientStatus{Id: "c1", Host: "irc.x", Nick: "me", Message: "Reconnecting in 30s"})
 	m.Status(&lierc.IRCClientStatus{Id: "c1", Host: "irc.x", Connected: true, Message: "Connected"})
 
 	got := q.all()
-	if len(got) != 4 {
-		t.Fatalf("enqueued %d, want 4: %+v", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("enqueued %d, want 2: %+v", len(got), got)
 	}
 	line, ok := got[0].v.(*ircwire.IRCClientMessage)
 	if got[0].topic != "chats" || !ok || line.Id != "c1" || line.Message.Command != "000" ||
-		line.Message.Prefix.Name != "irc.x" || strings.Join(line.Message.Params, "|") != "me|Reconnecting in 30s" {
+		line.Message.Prefix.Name != "irc.x" || strings.Join(line.Message.Params, "|") != "me|Reconnecting in 30s" ||
+		line.Status == nil || line.Status.Connected {
 		t.Errorf("first: %s %+v", got[0].topic, got[0].v)
 	}
-	st, ok := got[1].v.(*statusMessage)
-	if got[1].topic != "status" || !ok || st.Id != "c1" || st.Connected || st.Message != "Reconnecting in 30s" ||
-		time.Since(time.Unix(int64(st.Time), 0)) > time.Minute {
-		t.Errorf("second: %s %+v", got[1].topic, got[1].v)
-	}
 	// before registration there's no nick yet: *
-	if line := got[2].v.(*ircwire.IRCClientMessage); strings.Join(line.Message.Params, "|") != "*|Connected" {
-		t.Errorf("no-nick line params %q", line.Message.Params)
-	}
-	if st := got[3].v.(*statusMessage); got[3].topic != "status" || !st.Connected {
-		t.Errorf("fourth: %s %+v", got[3].topic, got[3].v)
+	line, ok = got[1].v.(*ircwire.IRCClientMessage)
+	if got[1].topic != "chats" || !ok || strings.Join(line.Message.Params, "|") != "*|Connected" ||
+		line.Status == nil || !line.Status.Connected {
+		t.Errorf("second: %s %+v", got[1].topic, got[1].v)
 	}
 }
 
@@ -106,10 +101,10 @@ func TestCreateDestroyPublishNoConnectionEvents(t *testing.T) {
 
 	sawStatus := false
 	for _, e := range q.all() {
-		if e.topic == "status" {
-			sawStatus = true
-		}
 		if msg, ok := e.v.(*ircwire.IRCClientMessage); ok {
+			if msg.Status != nil {
+				sawStatus = true
+			}
 			switch msg.Message.Command {
 			case "CREATE", "DELETE", "CONNECT", "DISCONNECT":
 				t.Errorf("published %s on %s", msg.Message.Command, e.topic)

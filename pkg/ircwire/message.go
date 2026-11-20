@@ -63,8 +63,26 @@ func ParseIRCMessage(line string) (*IRCMessage, error) {
 // Channels is set (non-nil, even if empty) on NICK and QUIT: the
 // channels the line belongs in. Ordinary lines leave it nil, which
 // marshals as "Channels":null.
+//
+// Status and Config are liercd's own, set only by liercd, never from what
+// an IRC server sends: this envelope is built by liercd, while the server
+// controls Message, its tags included.
 type IRCClientMessage struct {
 	Id       string
 	Message  *IRCMessage
 	Channels []string
+	// Status is the connection's state, on liercd's 000 status line only;
+	// lierc-api sends it to the owner's tabs as connection:connect or
+	// connection:disconnect. Nil on every other line.
+	Status *ConnectionStatus `json:",omitempty"`
+	// Config is the config fields liercd changed handling this line, with
+	// their new values, for lierc-api's logger to save: Channels on its
+	// own JOIN or PART or a KICK of it, Nick on its own NICK. Nil on every
+	// other line.
+	Config map[string]any `json:",omitempty"`
+}
+
+// ConnectionStatus is a connection's state, on liercd's 000 status line.
+type ConnectionStatus struct {
+	Connected bool
 }

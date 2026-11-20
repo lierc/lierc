@@ -29,13 +29,12 @@ type Sink interface {
 	Message(*ircwire.IRCClientMessage)
 	// Status is the connection's state whenever it changes.
 	Status(*IRCClientStatus)
-	// ConfigChange is the fields of a connection's config that liercd
-	// changed itself (its channels as it joins and parts, a nick it was
-	// asked to change to), for lierc-api to save.
-	ConfigChange(*IRCConfigChange)
 }
 
-// IRCConfigChange is the changed fields of one connection's config.
+// IRCConfigChange is the fields of a connection's config that liercd
+// changed itself (its channels as it joins and parts, a nick it was asked
+// to change to). It's published as the Config of the line that made it
+// (see publishEffects), for lierc-api's logger to save.
 type IRCConfigChange struct {
 	Id     string
 	Config map[string]interface{}
@@ -55,9 +54,13 @@ type IRCClient struct {
 	statusMu sync.Mutex
 	Id       string
 	Config   *IRCConfig
-	Channels map[string]*IRCChannel
-	User     string
-	Host     string
+	// pendingConfig is the config change a handler made for the line
+	// onLine publishes next, the same one: handlers and onLine run in turn
+	// on the connection's read goroutine. Guarded by c's lock.
+	pendingConfig map[string]any
+	Channels      map[string]*IRCChannel
+	User          string
+	Host          string
 	// Registered is set once irc-go has finished registering (Connect has
 	// returned) and the connection is set up; the API's messages are
 	// refused until then

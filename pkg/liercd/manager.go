@@ -33,39 +33,21 @@ type ClientManager struct {
 }
 
 // Message queues a client's line on the chats topic; NICK and QUIT come
-// here too, with their channels.
+// here too, with their channels, and a line that changed the config
+// carries the change.
 func (m *ClientManager) Message(e *ircwire.IRCClientMessage) {
 	m.queue.Enqueue("chats", e)
 }
 
-// Status queues a client's status twice: as a 000 line on the chats topic,
-// which the logger stores in the status panel's history, and as its state
-// on the status topic, which the stream server sends to the owner's tabs
-// as connection:connect or connection:disconnect.
+// Status queues a client's status as a 000 line on the chats topic, which
+// the logger stores in the status panel's history, with the state as its
+// Status, which the stream server sends to the owner's tabs as
+// connection:connect or connection:disconnect.
 func (m *ClientManager) Status(s *lierc.IRCClientStatus) {
 	if line := m.StatusLine(s); line != nil {
+		line.Status = &ircwire.ConnectionStatus{Connected: s.Connected}
 		m.queue.Enqueue("chats", line)
 	}
-	m.queue.Enqueue("status", &statusMessage{
-		Id:        s.Id,
-		Connected: s.Connected,
-		Message:   s.Message,
-		Time:      float64(time.Now().UnixNano()) / 1e9,
-	})
-}
-
-// statusMessage is a connection's state on the status topic.
-type statusMessage struct {
-	Id        string
-	Connected bool
-	Message   string
-	Time      float64
-}
-
-// ConfigChange queues a config change on the config topic, for
-// lierc-api to save.
-func (m *ClientManager) ConfigChange(c *lierc.IRCConfigChange) {
-	m.queue.Enqueue("config", c)
 }
 
 func (m *ClientManager) Shutdown() {

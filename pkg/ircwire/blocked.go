@@ -4,8 +4,8 @@ import "net/netip"
 
 // Addresses liercd must not connect to: loopback, private and other
 // internal ranges, so a user's connection can't reach services on this
-// host or its network. The same list is in
-// lierc-api's internal/connconfig; keep the two in step.
+// host or its network. lierc-api's internal/connconfig checks
+// connection configs against this list too, through BlockedIP.
 var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("10.0.0.0/8"),

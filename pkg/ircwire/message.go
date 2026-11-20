@@ -1,6 +1,7 @@
 // Package ircwire is liercd's wire format, the IRC messages it publishes
-// to NSQ, and the addresses it refuses to connect to: what liercd and the
-// programs reading its messages (lierc-api's logger) share. It needs only
+// to NSQ, the addresses it refuses to connect to, and the numerics the
+// logger sorts: what liercd and the programs reading its messages
+// (lierc-api's logger) share. It needs only
 // irc-go's ircmsg, so it builds without lierc's irc-go fork.
 //
 // lierc-api pins this package by pseudo-version in its go.mod, not by a

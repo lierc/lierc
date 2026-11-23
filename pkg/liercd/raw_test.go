@@ -150,6 +150,75 @@ func TestRawLineBreakRefused(t *testing.T) {
 	}
 }
 
+// checkRaw lets ordinary lines through, at IRC's limits, and refuses
+// ones a server would cut short or reject, and liercd's own commands.
+func TestCheckRaw(t *testing.T) {
+	x := func(n int) string { return strings.Repeat("x", n) }
+	// a PRIVMSG of n bytes, and a TAGMSG with n bytes of tag data
+	body := func(n int) string { return "PRIVMSG #a :" + x(n-len("PRIVMSG #a :")) }
+	tags := func(n int) string { return "@+x=" + x(n-len("+x=")) + " TAGMSG #a" }
+	for _, tc := range []struct {
+		name, line string
+		ok         bool
+	}{
+		{"message", "PRIVMSG #a :hi", true},
+		{"reaction", "@+reply=abc;+draft/react=👍 TAGMSG #a", true},
+		{"lowercase", "join #a", true},
+		{"prefix", ":me!u@h PRIVMSG #a :hi", true},
+		{"utf-8", "PRIVMSG #a :héllo 😀", true},
+		{"QUIT", "QUIT :bye", true},
+		{"510 bytes", body(510), true},
+		{"511 bytes", body(511), false},
+		{"510 bytes of é", "PRIVMSG #a :" + strings.Repeat("é", (510-12)/2), true},
+		{"over 510 bytes of é", "PRIVMSG #a :" + strings.Repeat("é", 250), false},
+		{"tags beside a 510-byte body", "@+x=" + x(1000) + " " + body(510), true},
+		{"4094 bytes of tags", tags(4094), true},
+		{"4095 bytes of tags", tags(4095), false},
+		{"NUL", "PRIVMSG #a :a\x00b", false},
+		{"empty", "", false},
+		{"spaces", "   ", false},
+		{"tags only", "@+x=y", false},
+		{"tags, no command", "@+x=y ", false},
+		{"prefix only", ":me!u@h", false},
+		{"non-ASCII command", "PRÏVMSG #a :hi", false},
+		{"CAP", "CAP REQ :-message-tags", false},
+		{"lowercase cap", "cap end", false},
+		{"tagged CAP", "@+x=y CAP LS", false},
+		{"AUTHENTICATE", "AUTHENTICATE PLAIN", false},
+		{"PASS", "PASS secret", false},
+		{"USER", "USER u 0 * :real", false},
+	} {
+		if err := checkRaw(tc.line); (err == nil) != tc.ok {
+			t.Errorf("%s: %.40q: %v, want ok %v", tc.name, tc.line, err, tc.ok)
+		}
+	}
+}
+
+// A line checkRaw refuses gets a 400 with its reason, whether or not the
+// connection is set up.
+func TestRawRefusesInvalid(t *testing.T) {
+	m := NewClientManager(discard{})
+	c := &lierc.IRCClient{Id: "c1", Config: &lierc.IRCConfig{Nick: "me"}}
+	m.AddClient(c)
+	for _, registered := range []bool{false, true} {
+		c.Lock()
+		c.Registered = registered
+		c.Unlock()
+		for line, reason := range map[string]string{
+			"PRIVMSG #a :a\x00b":                      "doesn't allow",
+			"PRIVMSG #a :" + strings.Repeat("x", 600): "too long",
+			"CAP REQ :-message-tags":                  "relaychat handles it",
+			"@+x=y":                                   "isn't a valid IRC line",
+		} {
+			w := httptest.NewRecorder()
+			m.HandleCommand(w, httptest.NewRequest("POST", "/c1/raw", strings.NewReader(line)))
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), reason) {
+				t.Errorf("registered %v, %.30q: %d %q, want 400 with %q", registered, line, w.Code, w.Body.String(), reason)
+			}
+		}
+	}
+}
+
 // discard is a Queue that drops everything.
 type discard struct{}
 

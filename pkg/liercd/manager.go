@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ergochat/irc-go/ircmsg"
+
 	"github.com/lierc/lierc/pkg/ircwire"
 	"github.com/lierc/lierc/pkg/lierc"
 )
@@ -244,6 +246,10 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "A line can't contain a line break", http.StatusBadRequest)
 			return
 		}
+		if err := checkRaw(line); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		// nothing from the user goes to the server until the connection
 		// is set up: before then the server would refuse most of it
 		// (451), and we couldn't tell whether it will echo a message or
@@ -291,6 +297,43 @@ func (m *ClientManager) HandleCommand(w http.ResponseWriter, r *http.Request) {
 func rawLine(body []byte) (line string, ok bool) {
 	line = strings.TrimRight(string(body), "\r\n")
 	return line, !strings.ContainsAny(line, "\r\n")
+}
+
+// rawLimit is the most bytes a raw line's message may have, its line
+// ending included and its tags not: IRC's 512. The tags have their own
+// client limit, 4094 bytes (ircmsg.MaxlenClientTagData).
+const rawLimit = 512
+
+// liercdCommands are the commands liercd sends itself, to register and
+// negotiate caps. One from the API would change state behind liercd's
+// back (a cap it thinks it has, its login), so it's refused.
+var liercdCommands = map[string]bool{
+	"CAP":          true,
+	"AUTHENTICATE": true,
+	"PASS":         true,
+	"USER":         true,
+}
+
+// checkRaw is why a raw line from the API can't be sent, for the user, or
+// nil: it must parse as an IRC line, without a NUL, within IRC's length
+// limits, and not be one of liercdCommands. A server could cut a long
+// line short or drop the connection over a bad one; this says so first.
+func checkRaw(line string) error {
+	m, err := ircmsg.ParseLineStrict(line, true, rawLimit)
+	switch {
+	case errors.Is(err, ircmsg.ErrorBodyTooLong):
+		return fmt.Errorf("The line is too long for IRC (over %d bytes)", rawLimit-2)
+	case errors.Is(err, ircmsg.ErrorTagsTooLong):
+		return fmt.Errorf("The line's tags are too long for IRC (over %d bytes)", ircmsg.MaxlenClientTagData)
+	case errors.Is(err, ircmsg.ErrorLineContainsBadChar):
+		return errors.New("The line contains a character IRC doesn't allow")
+	case err != nil:
+		return errors.New("That isn't a valid IRC line")
+	}
+	if liercdCommands[m.Command] {
+		return fmt.Errorf("%s can't be sent: relaychat handles it", m.Command)
+	}
+	return nil
 }
 
 // requestedNick is the nick a raw NICK line asks for, after any tags

@@ -80,8 +80,12 @@ type IRCClient struct {
 	// The current connection attempt. conn and socket are nil between
 	// attempts; attemptDone is closed once an attempt has ended and
 	// published its statuses, and is replaced when the next one starts.
-	conn        *ircevent.Connection
-	socket      net.Conn
+	conn   *ircevent.Connection
+	socket net.Conn
+	// identSock is the attempt's TCP connection, set as soon as it's
+	// connected (before TLS, unlike socket), for the portmap: a server
+	// asks for ident while the handshake is still going on
+	identSock   net.Conn
 	attemptDone chan struct{}
 	cancelDial  context.CancelFunc
 	// registering: the nick last sent and how many the server has

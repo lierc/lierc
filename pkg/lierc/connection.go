@@ -103,6 +103,8 @@ func (c *IRCClient) connect() {
 	dialCtx, cancel := context.WithCancel(context.Background())
 	var socket *trackedConn
 	dial := dialer(Exempt(config), config.Ssl, func(sock net.Conn) {
+		c.onDialed(conn, sock)
+	}, func(sock net.Conn) {
 		socket = &trackedConn{Conn: sock}
 		c.onConnected(conn, s, socket)
 	})
@@ -134,6 +136,7 @@ func (c *IRCClient) connect() {
 
 	c.conn = conn
 	c.socket = nil
+	c.identSock = nil
 	c.attemptDone = make(chan struct{})
 	c.cancelDial = cancel
 	c.requestedNick = ""
@@ -189,6 +192,18 @@ func (c *IRCClient) finishSetup() {
 	c.Join()
 }
 
+// onDialed runs as soon as the TCP connection is up, before any TLS
+// handshake, and puts it in the portmap (PortMap): the server asks for
+// ident from the moment it accepts it. A connection that's no longer the
+// current attempt is ignored.
+func (c *IRCClient) onDialed(conn *ircevent.Connection, sock net.Conn) {
+	c.Lock()
+	defer c.Unlock()
+	if c.conn == conn && !c.quitting {
+		c.identSock = sock
+	}
+}
+
 // onConnected runs once the socket (and TLS) is up, before registration.
 func (c *IRCClient) onConnected(conn *ircevent.Connection, s *sender, sock net.Conn) {
 	// decide and publish under statusMu, like endAttempt: Destroy either
@@ -236,6 +251,7 @@ func (c *IRCClient) endAttempt(conn *ircevent.Connection, s *sender, msg, logMsg
 	sock, done := c.socket, c.attemptDone
 	c.conn = nil
 	c.socket = nil
+	c.identSock = nil
 	c.cancelDial = nil
 	c.Registered = false
 	if c.stopped != "" {
@@ -373,7 +389,11 @@ func (c *IRCClient) Send(line string) bool {
 // checks a query comes from. ok is false while it isn't connected.
 func (c *IRCClient) PortMap() (user, local, remote, remoteIP string, ok bool) {
 	c.RLock()
-	sock := c.socket
+	// the TCP connection from its connect, before TLS is up (identSock)
+	sock := c.identSock
+	if sock == nil {
+		sock = c.socket
+	}
 	user = c.Config.User
 	if user == "" {
 		user = c.Config.Nick

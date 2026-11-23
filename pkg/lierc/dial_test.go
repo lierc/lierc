@@ -25,7 +25,7 @@ func TestDialerRefusesPrivate(t *testing.T) {
 	defer ln.Close()
 
 	called := false
-	d := dialer(false, false, func(net.Conn) { called = true })
+	d := dialer(false, false, nil, func(net.Conn) { called = true })
 	conn, err := d(context.Background(), "tcp", ln.Addr().String())
 	if err == nil {
 		conn.Close()
@@ -77,7 +77,7 @@ func TestDialerTLS(t *testing.T) {
 	}()
 
 	var got []net.Conn
-	d := dialer(true, true, func(c net.Conn) { got = append(got, c) })
+	d := dialer(true, true, nil, func(c net.Conn) { got = append(got, c) })
 	conn, err := d(context.Background(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestDialerTLSRefusesPrivate(t *testing.T) {
 	defer ln.Close()
 
 	called := false
-	d := dialer(false, true, func(net.Conn) { called = true })
+	d := dialer(false, true, nil, func(net.Conn) { called = true })
 	conn, err := d(context.Background(), "tcp", ln.Addr().String())
 	if err == nil {
 		conn.Close()
@@ -153,7 +153,7 @@ func TestDialerTLSHandshakeFailureCloses(t *testing.T) {
 	}()
 
 	called := false
-	d := dialer(true, true, func(net.Conn) { called = true })
+	d := dialer(true, true, nil, func(net.Conn) { called = true })
 	if conn, err := d(context.Background(), "tcp", ln.Addr().String()); err == nil {
 		conn.Close()
 		t.Fatal("handshake with a non-TLS server should fail")

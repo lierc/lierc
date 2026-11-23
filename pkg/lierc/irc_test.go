@@ -727,6 +727,63 @@ func TestPortMap(t *testing.T) {
 	}
 }
 
+// An IRC server asks for ident as soon as it accepts the TCP connection,
+// while the TLS handshake is still going on (Libera does). The connection
+// is in the portmap from the TCP connect, not just once TLS is up, and
+// leaves it when the handshake fails.
+func TestPortMapDuringTLSHandshake(t *testing.T) {
+	fastRetries(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	// the dial guard lets the default network through (as newFakeServer)
+	t.Setenv("DEFAULT_NETWORK_HOST", "127.0.0.1")
+	t.Setenv("DEFAULT_NETWORK_PORT", strconv.Itoa(ln.Addr().(*net.TCPAddr).Port))
+	accepted := make(chan net.Conn, 4)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- conn // never answers the ClientHello
+		}
+	}()
+	d := drain(t)
+	c := newTestClient(t, d, &IRCConfig{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, Ssl: true, Nick: "me", User: "me"})
+
+	var server net.Conn
+	select {
+	case server = <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no connection")
+	}
+	var local string
+	var ok bool
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if _, local, _, _, ok = c.PortMap(); ok {
+			break
+		}
+	}
+	if !ok {
+		t.Fatal("not in the portmap while the TLS handshake is under way")
+	}
+	if want := strconv.Itoa(server.RemoteAddr().(*net.TCPAddr).Port); local != want {
+		t.Errorf("local port %s, want %s", local, want)
+	}
+
+	// the handshake fails: the attempt's socket leaves the portmap
+	server.Close()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if _, l, _, _, ok := c.PortMap(); !ok || l != local {
+			return
+		}
+	}
+	t.Error("still in the portmap after the handshake failed")
+}
+
 // fastKeepAlive makes irc-go PING (and try to regain its preferred nick)
 // every 200ms for the test's duration. irc-go needs KeepAlive ≥ Timeout,
 // and an unanswered PING is fatal at the next Timeout tick, which the fake
